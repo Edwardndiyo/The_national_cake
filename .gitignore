@@ -82,3 +82,6 @@ coverage.xml
 *.cover
 .hypothesis/
 .pytest_cache/
+
+
+firebase_service_key.json

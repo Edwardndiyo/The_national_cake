@@ -1,23 +1,50 @@
 # app/utils/decorators.py
-from flask_jwt_extended import get_jwt_identity
 from functools import wraps
+from flask import request
+import jwt
 from app.models import User
-from app import db
 from app.utils.responses import error_response
+from flask import current_app
 
 
-def role_required(roles):
-    def wrapper(fn):
-        @wraps(fn)
-        def decorator(*args, **kwargs):
-            user_id = get_jwt_identity()
-            if not user_id:
-                return error_response("Unauthorized", 401)
-            user = db.session.get(User, user_id)
-            if not user or user.role not in roles:
-                return error_response("Forbidden: insufficient role", 403)
-            return fn(*args, **kwargs)
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = None
+        if "Authorization" in request.headers:
+            token = request.headers["Authorization"].split(" ")[1]  # "Bearer <token>"
 
-        return decorator
+        if not token:
+            return error_response("Token is missing!", 401)
+
+        try:
+            data = jwt.decode(
+                token, current_app.config["SECRET_KEY"], algorithms=["HS256"]
+            )
+            current_user = User.query.get(data["id"])
+            if not current_user:
+                return error_response("User not found", 404)
+        except jwt.ExpiredSignatureError:
+            return error_response("Token has expired!", 401)
+        except jwt.InvalidTokenError:
+            return error_response("Invalid token!", 401)
+
+        return f(current_user, *args, **kwargs)
+
+    return decorated
+
+
+def roles_required(*roles):
+    """Restrict access to users with specific roles (e.g. admin, moderator)"""
+
+    def wrapper(f):
+        @wraps(f)
+        def decorated(current_user, *args, **kwargs):
+            if current_user.role not in roles:
+                return error_response("Permission denied", 403)
+            return f(current_user, *args, **kwargs)
+
+        return decorated
 
     return wrapper
+

@@ -48,6 +48,15 @@ def user_to_dict(user):
 @profile_bp.route("/me", methods=["GET"])
 @token_required
 def get_my_profile(current_user):
+    """
+    Get current user profile
+    ---
+    tags:
+      - Profile
+    responses:
+      200:
+        description: Profile fetched successfully
+    """
     """Return profile for authenticated user."""
     return success_response(user_to_dict(current_user), "Profile fetched successfully")
 
@@ -57,6 +66,23 @@ def get_my_profile(current_user):
 # ---------------------------
 @profile_bp.route("/<identifier>", methods=["GET"])
 def get_profile(identifier):
+    """
+    Get user profile (by ID or username)
+    ---
+    tags:
+      - Profile
+    parameters:
+      - in: path
+        name: identifier
+        required: true
+        type: string
+        description: User ID (int) or username (string)
+    responses:
+      200:
+        description: Profile fetched successfully
+      404:
+        description: User not found
+    """
     """Fetch a user profile by ID or username (public)."""
     user = None
     if identifier.isdigit():
@@ -76,6 +102,30 @@ def get_profile(identifier):
 @profile_bp.route("/update", methods=["PUT"])
 @token_required
 def update_profile(current_user):
+    """
+    Update profile (authenticated user)
+    ---
+    tags:
+      - Profile
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            firstname: {type: string}
+            lastname: {type: string}
+            username: {type: string}
+            nationality: {type: string}
+            avatar: {type: string}
+            phone: {type: string}
+            referral: {type: string}
+    responses:
+      200:
+        description: Profile updated successfully
+      400:
+        description: Invalid input or uniqueness constraint failed
+    """
     """
     Update the current user's profile.
     Allowed fields: firstname, lastname, username, nationality, avatar, phone, referral.
@@ -120,6 +170,25 @@ def update_profile(current_user):
 @token_required
 def upload_avatar(current_user):
     """
+    Upload avatar image
+    ---
+    tags:
+      - Profile
+    consumes:
+      - multipart/form-data
+    parameters:
+      - in: formData
+        name: avatar
+        type: file
+        required: true
+        description: Avatar image file
+    responses:
+      201:
+        description: Avatar uploaded successfully
+      400:
+        description: Invalid or missing file
+    """
+    """
     Upload avatar image for the authenticated user.
     - Accepts multipart/form-data with key 'avatar'.
     - Saves to: <app.static_folder>/uploads/avatars/<filename>
@@ -160,6 +229,25 @@ def upload_avatar(current_user):
 @token_required
 def set_home_era(current_user):
     """
+    Set home era
+    ---
+    tags:
+      - Profile
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [home_era]
+          properties:
+            home_era: {type: string}
+    responses:
+      200:
+        description: Home era updated successfully
+      400:
+        description: home_era is required
+    """
+    """
     Set the user's home era choice.
     Body: { "home_era": "Renaissance" }
     """
@@ -178,6 +266,22 @@ def set_home_era(current_user):
 # ---------------------------
 @profile_bp.route("/leaderboard", methods=["GET"])
 def leaderboard():
+    """
+    Get leaderboard (public)
+    ---
+    tags:
+      - Profile
+    parameters:
+      - in: query
+        name: limit
+        type: integer
+        required: false
+        default: 10
+        description: Number of top users to return
+    responses:
+      200:
+        description: Leaderboard fetched successfully
+    """
     """
     Return top users by points.
     Query params:
@@ -209,6 +313,33 @@ def leaderboard():
 @roles_required("admin")
 def change_role(current_user, user_id):
     """
+    Change user role (Admin only)
+    ---
+    tags:
+      - Profile (Admin)
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [role]
+          properties:
+            role:
+              type: string
+              enum: [user, moderator, admin]
+    responses:
+      200:
+        description: User role updated
+      400:
+        description: Invalid role
+      404:
+        description: User not found
+    """
+    """
     Admin-only: change a user's role.
     Body: { "role": "moderator" }  # allowed: user, moderator, admin
     """
@@ -234,6 +365,22 @@ def change_role(current_user, user_id):
 @roles_required("admin")
 def verify_user(current_user, user_id):
     """
+    Verify user (Admin only)
+    ---
+    tags:
+      - Profile (Admin)
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: User marked as verified
+      404:
+        description: User not found
+    """
+    """
     Admin-only: mark user as verified (is_verified=True)
     """
     user = User.query.get(user_id)
@@ -245,57 +392,3 @@ def verify_user(current_user, user_id):
     return success_response(
         {"id": user.id, "is_verified": True}, "User marked as verified"
     )
-
-
-# # app/profile/routes.py
-# from flask import Blueprint, request
-# from app import db
-# from app.models import User
-# from app.utils.decorators import token_required
-# from app.utils.responses import success_response, error_response
-
-# profile_bp = Blueprint("profile", __name__, url_prefix="/profile")
-
-
-# @profile_bp.route("/<identifier>", methods=["GET"])
-# @token_required
-# def get_profile(current_user, identifier):
-#     user = None
-#     if identifier.isdigit():
-#         user = User.query.get(int(identifier))
-#     else:
-#         user = User.query.filter_by(username=identifier).first()
-
-#     if not user:
-#         return error_response("User not found", 404)
-
-#     profile_data = {
-#         "id": user.id,
-#         "firstname": user.firstname,
-#         "lastname": user.lastname,
-#         "fullname": user.fullname,
-#         "username": user.username,
-#         "email": user.email,
-#         "phone": user.phone,
-#         "nationality": user.nationality,
-#         "avatar": user.avatar,
-#         "role": user.role,
-#         "points": user.points,
-#     }
-
-#     return success_response(profile_data, "Profile fetched successfully")
-
-
-# @profile_bp.route("/update", methods=["PUT"])
-# @token_required
-# def update_profile(current_user):
-#     data = request.get_json()
-
-#     allowed_fields = ["firstname", "lastname", "username", "nationality", "avatar"]
-#     for field in allowed_fields:
-#         if field in data:
-#             setattr(current_user, field, data[field])
-
-#     db.session.commit()
-
-#     return success_response(message="Profile updated successfully")

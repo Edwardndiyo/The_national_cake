@@ -14,6 +14,26 @@ feedback_bp = Blueprint("feedback", __name__, url_prefix="/feedback")
 @feedback_bp.route("/", methods=["POST"])
 @token_required
 def submit_feedback(current_user):
+    """
+    Submit new feedback
+    ---
+    tags:
+      - Feedback
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [content]
+          properties:
+            content: {type: string}
+            category: {type: string, default: general}
+    responses:
+      201:
+        description: Feedback submitted successfully
+      400:
+        description: Content is required
+    """
     """Submit new feedback"""
     data = request.get_json()
     if not data.get("content"):
@@ -46,6 +66,15 @@ def submit_feedback(current_user):
 # ---------------------------
 @feedback_bp.route("/", methods=["GET"])
 def list_feedback():
+    """
+    List all feedback
+    ---
+    tags:
+      - Feedback
+    responses:
+      200:
+        description: Feedback fetched successfully
+    """
     """Fetch all feedback with votes"""
     feedback_list = Feedback.query.order_by(Feedback.created_at.desc()).all()
     data = []
@@ -71,6 +100,33 @@ def list_feedback():
 @feedback_bp.route("/<int:feedback_id>/vote", methods=["POST"])
 @token_required
 def vote_feedback(current_user, feedback_id):
+    """
+    Vote on feedback (upvote/downvote)
+    ---
+    tags:
+      - Feedback
+    parameters:
+      - in: path
+        name: feedback_id
+        required: true
+        type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [vote]
+          properties:
+            vote:
+              type: string
+              enum: [upvote, downvote]
+    responses:
+      200:
+        description: Vote recorded successfully
+      400:
+        description: Invalid vote value
+      404:
+        description: Feedback not found
+    """
     """Vote on feedback (upvote/downvote)"""
     data = request.get_json()
     if not data.get("vote") or data["vote"] not in ["upvote", "downvote"]:
@@ -119,6 +175,22 @@ def vote_feedback(current_user, feedback_id):
 @token_required
 @roles_required("admin")
 def delete_feedback(current_user, feedback_id):
+    """
+    Delete feedback (Admin only)
+    ---
+    tags:
+      - Feedback
+    parameters:
+      - in: path
+        name: feedback_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Feedback deleted successfully
+      404:
+        description: Feedback not found
+    """
     """Delete feedback (admin only)"""
     feedback = Feedback.query.get(feedback_id)
     if not feedback:

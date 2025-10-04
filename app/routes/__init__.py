@@ -5,7 +5,7 @@ main = Blueprint("main", __name__)
 
 @main.route("/")
 def home():
-    return {"message": "Hello Flask Backend!"}
+    return {"Paradox": "Hello Flask Backend!"}
 
 
 def init_routes(app):

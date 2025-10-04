@@ -27,6 +27,75 @@ google_bp = Blueprint("google_auth", __name__, url_prefix="/auth/google")
 
 @google_bp.route("/login", methods=["POST"])
 def google_login():
+    """
+    openapi: 3.0.0
+info:
+  title: Google Authentication API
+  description: API for logging in users using Google Sign-In (Firebase).
+  version: 1.0.0
+
+servers:
+  - url: http://localhost:5000
+    description: Local development server
+  - url: https://your-deployed-domain.com
+    description: Production server
+
+paths:
+  /auth/google/login:
+    post:
+      summary: Login with Google
+      description: >
+        Authenticate a user using their Google ID token.  
+        The token is verified with Firebase.  
+        If the user does not exist in the database, a new one will be created.  
+        Returns access and refresh JWT tokens.
+      tags:
+        - Authentication
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - id_token
+              properties:
+                id_token:
+                  type: string
+                  description: Google ID token obtained from the frontend after Google Sign-In.
+                  example: eyJhbGciOiJSUzI1NiIsImtpZCI6IjA1...
+      responses:
+        "200":
+          description: Successful login
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  access_token:
+                    type: string
+                    description: JWT access token
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+                  refresh_token:
+                    type: string
+                    description: JWT refresh token
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        "401":
+          description: Invalid or expired Google token
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Invalid Google token
+                  details:
+                    type: string
+                    example: Token signature expired or invalid
+        "500":
+          description: Internal server error
+    """
     data = request.get_json()
     id_token = data.get("id_token")
 

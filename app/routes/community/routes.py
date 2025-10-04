@@ -14,6 +14,15 @@ community_bp = Blueprint("community", __name__, url_prefix="/community")
 # ---------------------------
 @community_bp.route("/zones", methods=["GET"])
 def list_zones():
+    """
+    List all zones
+    ---
+    tags:
+      - Community
+    responses:
+      200:
+        description: Zones fetched successfully
+    """
     zones = Zone.query.all()
     data = [{"id": z.id, "name": z.name, "description": z.description} for z in zones]
     return success_response(data, "Zones fetched successfully")
@@ -23,6 +32,30 @@ def list_zones():
 @token_required
 @roles_required("admin")
 def create_zone(current_user):
+    """
+    Create a new zone (Admin only)
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [name]
+          properties:
+            name: {type: string}
+            description: {type: string}
+    responses:
+      201:
+        description: Zone created successfully
+      400:
+        description: Zone name is required
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin role required
+    """
     data = request.get_json()
     if not data.get("name"):
         return error_response("Zone name is required", 400)
@@ -47,6 +80,29 @@ def create_zone(current_user):
 @community_bp.route("/posts", methods=["POST"])
 @token_required
 def create_post(current_user):
+    """
+    Create a new post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [title, content, zone_id]
+          properties:
+            title: {type: string}
+            content: {type: string}
+            zone_id: {type: integer}
+    responses:
+      201:
+        description: Post created successfully
+      400:
+        description: Title, content, and zone_id are required
+      401:
+        description: Unauthorized
+    """
     data = request.get_json()
     if not data.get("title") or not data.get("content") or not data.get("zone_id"):
         return error_response("Title, content, and zone_id are required", 400)
@@ -80,6 +136,27 @@ def create_post(current_user):
 @token_required
 @roles_required("admin")
 def delete_post(current_user, post_id):
+    """
+    Delete a post (Admin only)
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Post deleted successfully
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin role required
+      404:
+        description: Post not found
+    """
     post = Post.query.get(post_id)
     if not post:
         return error_response("Post not found", 404)
@@ -99,6 +176,34 @@ def delete_post(current_user, post_id):
 @community_bp.route("/posts/<int:post_id>/comments", methods=["POST"])
 @token_required
 def add_comment(current_user, post_id):
+    """
+    Add a comment to a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [content]
+          properties:
+            content: {type: string}
+    responses:
+      201:
+        description: Comment added successfully
+      400:
+        description: Content is required
+      401:
+        description: Unauthorized
+      404:
+        description: Post not found
+    """
     data = request.get_json()
     if not data.get("content"):
         return error_response("Content is required", 400)
@@ -128,6 +233,27 @@ def add_comment(current_user, post_id):
 @community_bp.route("/posts/<int:post_id>/like", methods=["POST"])
 @token_required
 def toggle_like(current_user, post_id):
+    """
+    Like or unlike a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      201:
+        description: Post liked
+      200:
+        description: Post unliked
+      401:
+        description: Unauthorized
+      404:
+        description: Post not found
+    """
     existing_like = Like.query.filter_by(
         user_id=current_user.id, post_id=post_id
     ).first()
@@ -166,6 +292,31 @@ def toggle_like(current_user, post_id):
 @token_required
 @roles_required("admin")
 def create_event(current_user):
+    """
+    Create a new event (Admin only)
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [title, event_date]
+          properties:
+            title: {type: string}
+            description: {type: string}
+            event_date: {type: string, format: date-time}
+    responses:
+      201:
+        description: Event created successfully
+      400:
+        description: Title and event_date are required
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin role required
+    """
     data = request.get_json()
     if not data.get("title") or not data.get("event_date"):
         return error_response("Title and event_date are required", 400)
@@ -196,6 +347,34 @@ def create_event(current_user):
 @community_bp.route("/events/<int:event_id>/rsvp", methods=["POST"])
 @token_required
 def rsvp_event(current_user, event_id):
+    """
+    RSVP to an event
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        schema:
+          type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [status]
+          properties:
+            status: {type: string, enum: [going, interested, not_going]}
+    responses:
+      200:
+        description: RSVP updated successfully
+      400:
+        description: Status is required
+      401:
+        description: Unauthorized
+      404:
+        description: Event not found
+    """
     data = request.get_json()
     if not data.get("status"):
         return error_response("Status is required (going, interested, not_going)", 400)
@@ -225,6 +404,25 @@ def rsvp_event(current_user, event_id):
 @community_bp.route("/<int:zone_id>/members", methods=["GET"])
 @token_required
 def get_community_members(current_user, zone_id):
+    """
+    Get members of a community zone
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: zone_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Community members fetched successfully
+      401:
+        description: Unauthorized
+      404:
+        description: Community not found
+    """
     zone = Zone.query.get(zone_id)
     if not zone:
         return error_response("Community not found", 404)
@@ -259,6 +457,25 @@ def get_community_members(current_user, zone_id):
 @community_bp.route("/<int:zone_id>/posts", methods=["GET"])
 @token_required
 def get_community_posts(current_user, zone_id):
+    """
+    Get posts in a community zone
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: zone_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Community posts fetched successfully
+      401:
+        description: Unauthorized
+      404:
+        description: Community not found
+    """
     zone = Zone.query.get(zone_id)
     if not zone:
         return error_response("Community not found", 404)
@@ -282,6 +499,25 @@ def get_community_posts(current_user, zone_id):
 @community_bp.route("/<int:zone_id>/comments", methods=["GET"])
 @token_required
 def get_community_comments(current_user, zone_id):
+    """
+    Get comments in a community zone
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: zone_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Community comments fetched successfully
+      401:
+        description: Unauthorized
+      404:
+        description: Community not found
+    """
     zone = Zone.query.get(zone_id)
     if not zone:
         return error_response("Community not found", 404)
@@ -309,6 +545,25 @@ def get_community_comments(current_user, zone_id):
 @community_bp.route("/<int:zone_id>/stats", methods=["GET"])
 @token_required
 def get_community_stats(current_user, zone_id):
+    """
+    Get statistics for a community zone
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: zone_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Community stats fetched successfully
+      401:
+        description: Unauthorized
+      404:
+        description: Community not found
+    """
     zone = Zone.query.get(zone_id)
     if not zone:
         return error_response("Community not found", 404)

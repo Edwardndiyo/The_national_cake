@@ -14,6 +14,30 @@ badge_bp = Blueprint("badges", __name__, url_prefix="/badges")
 @token_required
 @roles_required("admin")
 def create_badge(current_user):
+    """
+    Create a new badge (Admin only)
+    ---
+    tags:
+      - Badges
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [name, description]
+          properties:
+            name: {type: string}
+            description: {type: string}
+    responses:
+      201:
+        description: Badge created successfully
+      400:
+        description: Name and description are required
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin role required
+    """
     data = request.get_json()
     if not data.get("name") or not data.get("description"):
         return error_response("Name and description are required", 400)
@@ -42,6 +66,17 @@ def create_badge(current_user):
 @badge_bp.route("/", methods=["GET"])
 @token_required
 def list_badges(current_user):
+    """
+    List all badges
+    ---
+    tags:
+      - Badges
+    responses:
+      200:
+        description: Badges fetched successfully
+      401:
+        description: Unauthorized
+    """
     badges = Badge.query.all()
     data = [{"id": b.id, "name": b.name, "description": b.description} for b in badges]
     return success_response(data, "Badges fetched successfully")
@@ -54,6 +89,32 @@ def list_badges(current_user):
 @token_required
 @roles_required("admin")
 def assign_badge(current_user):
+    """
+    Assign a badge to a user (Admin only)
+    ---
+    tags:
+      - Badges
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [badge_id, user_id]
+          properties:
+            badge_id: {type: integer}
+            user_id: {type: integer}
+    responses:
+      201:
+        description: Badge assigned successfully
+      400:
+        description: badge_id and user_id are required or user already has badge
+      401:
+        description: Unauthorized
+      403:
+        description: Forbidden - Admin role required
+      404:
+        description: Badge not found
+    """
     data = request.get_json()
     if not data.get("badge_id") or not data.get("user_id"):
         return error_response("badge_id and user_id are required", 400)
@@ -97,6 +158,25 @@ def assign_badge(current_user):
 @badge_bp.route("/user/<int:user_id>", methods=["GET"])
 @token_required
 def get_user_badges(current_user, user_id):
+    """
+    Get badges assigned to a user
+    ---
+    tags:
+      - Badges
+    parameters:
+      - in: path
+        name: user_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: User badges fetched successfully
+      401:
+        description: Unauthorized
+      404:
+        description: User not found or no badges
+    """
     user_badges = UserBadge.query.filter_by(user_id=user_id).all()
     data = [
         {

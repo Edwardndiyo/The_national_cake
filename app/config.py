@@ -4,7 +4,7 @@ import os
 class Config:
     SECRET_KEY = os.getenv("SECRET_KEY", "supersecretkey")
 
-    # Try PostgreSQL, fallback to SQLite
+    # Database
     SQLALCHEMY_DATABASE_URI = os.getenv(
         "DATABASE_URL", "sqlite:///ncc_dev.db"  # fallback
     )
@@ -12,16 +12,15 @@ class Config:
 
     # Mail config
     MAIL_SERVER = os.getenv("MAIL_SERVER", "localhost")
-    MAIL_PORT = int(os.getenv("MAIL_PORT", 8025))
-    MAIL_USE_TLS = False
-    MAIL_USE_SSL = False
+    MAIL_PORT = int(os.getenv("MAIL_PORT", 25))
+    MAIL_USE_TLS = os.getenv("MAIL_USE_TLS", "False").lower() in ("true", "1", "t")
+    MAIL_USE_SSL = os.getenv("MAIL_USE_SSL", "False").lower() in ("true", "1", "t")
     MAIL_USERNAME = os.getenv("MAIL_USERNAME")
     MAIL_PASSWORD = os.getenv("MAIL_PASSWORD")
     MAIL_DEFAULT_SENDER = os.getenv(
         "MAIL_DEFAULT_SENDER", "noreply@thenationalcake.com"
     )
 
-    # For dev: use console backend
-    MAIL_BACKEND = os.getenv("MAIL_BACKEND", "console")
+    MAIL_BACKEND = os.getenv("MAIL_BACKEND", "smtp")
 
     DEBUG = True

@@ -14,6 +14,8 @@ from app.routes.community.routes import community_bp
 from app.routes.badges.routes import badge_bp
 from app.routes.events.routes import events_bp
 from app.routes.feedback.routes import feedback_bp
+from flasgger import Swagger
+
 
 # db = SQLAlchemy()
 # migrate = Migrate()
@@ -24,6 +26,25 @@ from app.routes.feedback.routes import feedback_bp
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
+    
+    swagger_template = {
+    "swagger": "2.0",
+    "info": {
+        "title": "The National Cake API",
+        "description": "API documentation for The National Cake backend built with Flask By Paradox",
+        "version": "1.0.0"
+    },
+    "basePath": "/",
+    "schemes": [
+        "http",
+        "https"
+    ]
+}
+
+    swagger = Swagger(app, template=swagger_template)
+
+
+    # swagger = Swagger(app)
 
     # Initialize extensions
     db.init_app(app)

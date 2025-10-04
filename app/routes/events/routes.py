@@ -46,6 +46,15 @@ def mission_to_dict(mission):
 # ---------------------------
 @events_bp.route("/", methods=["GET"])
 def list_events():
+    """
+    List all events
+    ---
+    tags:
+      - Events
+    responses:
+      200:
+        description: List of events fetched successfully
+    """
     """List all events (public)."""
     events = Event.query.order_by(Event.start_date.asc()).all()
     return success_response(
@@ -55,6 +64,22 @@ def list_events():
 
 @events_bp.route("/<int:event_id>", methods=["GET"])
 def get_event(event_id):
+    """
+    Get a single event
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Event fetched successfully
+      404:
+        description: Event not found
+    """
     """Fetch single event (public)."""
     event = Event.query.get(event_id)
     if not event:
@@ -66,6 +91,28 @@ def get_event(event_id):
 @token_required
 @roles_required("admin")
 def create_event(current_user):
+    """
+    Create a new event (Admin only)
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [title, start_date]
+          properties:
+            title: {type: string}
+            description: {type: string}
+            start_date: {type: string, format: date-time}
+            end_date: {type: string, format: date-time}
+    responses:
+      201:
+        description: Event created successfully
+      400:
+        description: Invalid input
+    """
     """Admin-only: create a new event."""
     data = request.get_json() or {}
     if not data.get("title") or not data.get("start_date"):
@@ -95,6 +142,31 @@ def create_event(current_user):
 @token_required
 @roles_required("admin")
 def update_event(current_user, event_id):
+    """
+    Update an event (Admin only)
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          properties:
+            title: {type: string}
+            description: {type: string}
+            start_date: {type: string, format: date-time}
+            end_date: {type: string, format: date-time}
+    responses:
+      200:
+        description: Event updated successfully
+      404:
+        description: Event not found
+    """
     """Admin-only: update an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -124,6 +196,22 @@ def update_event(current_user, event_id):
 @token_required
 @roles_required("admin")
 def delete_event(current_user, event_id):
+    """
+    Delete an event (Admin only)
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Event deleted successfully
+      404:
+        description: Event not found
+    """
     """Admin-only: delete an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -139,6 +227,24 @@ def delete_event(current_user, event_id):
 @events_bp.route("/<int:event_id>/join", methods=["POST"])
 @token_required
 def join_event(current_user, event_id):
+    """
+    Join an event
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Joined event successfully
+      404:
+        description: Event not found
+      400:
+        description: Already joined this event
+    """
     """Join an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -158,6 +264,24 @@ def join_event(current_user, event_id):
 @events_bp.route("/<int:event_id>/leave", methods=["POST"])
 @token_required
 def leave_event(current_user, event_id):
+    """
+    Leave an event
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Left event successfully
+      404:
+        description: Event not found
+      400:
+        description: Not part of this event
+    """
     """Leave an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -176,6 +300,22 @@ def leave_event(current_user, event_id):
 
 @events_bp.route("/<int:event_id>/participants", methods=["GET"])
 def list_event_participants(event_id):
+    """
+    List event participants
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Participants fetched successfully
+      404:
+        description: Event not found
+    """
     """List participants of an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -194,6 +334,24 @@ def list_event_participants(event_id):
 @events_bp.route("/<int:event_id>/rsvp", methods=["POST"])
 @token_required
 def rsvp_event(current_user, event_id):
+    """
+    RSVP to an event
+    ---
+    tags:
+      - Events
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: RSVP successful
+      404:
+        description: Event not found
+      400:
+        description: Already RSVPed
+    """
     """RSVP to an event."""
     event = Event.query.get(event_id)
     if not event:
@@ -216,6 +374,20 @@ def rsvp_event(current_user, event_id):
 # ---------------------------
 @events_bp.route("/<int:event_id>/missions", methods=["GET"])
 def list_missions(event_id):
+    """
+    List missions for an event
+    ---
+    tags:
+      - Missions
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Missions fetched successfully
+    """
     """List missions for an event."""
     missions = Mission.query.filter_by(event_id=event_id).all()
     return success_response(
@@ -227,6 +399,32 @@ def list_missions(event_id):
 @token_required
 @roles_required("admin")
 def create_mission(current_user, event_id):
+    """
+    Create a mission for an event (Admin only)
+    ---
+    tags:
+      - Missions
+    parameters:
+      - in: path
+        name: event_id
+        required: true
+        type: integer
+      - in: body
+        name: body
+        schema:
+          type: object
+          required: [title, points]
+          properties:
+            title: {type: string}
+            description: {type: string}
+            points: {type: integer}
+            badge_id: {type: integer}
+    responses:
+      201:
+        description: Mission created successfully
+      400:
+        description: Invalid input
+    """
     """Admin-only: create a mission for an event."""
     data = request.get_json() or {}
     if not data.get("title") or not data.get("points"):
@@ -248,6 +446,24 @@ def create_mission(current_user, event_id):
 @events_bp.route("/missions/<int:mission_id>/join", methods=["POST"])
 @token_required
 def join_mission(current_user, mission_id):
+    """
+    Join a mission
+    ---
+    tags:
+      - Missions
+    parameters:
+      - in: path
+        name: mission_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Mission joined successfully
+      404:
+        description: Mission not found
+      400:
+        description: Already joined this mission
+    """
     mission = Mission.query.get(mission_id)
     if not mission:
         return error_response("Mission not found", 404)
@@ -265,6 +481,24 @@ def join_mission(current_user, mission_id):
 @events_bp.route("/missions/<int:mission_id>/complete", methods=["POST"])
 @token_required
 def complete_mission(current_user, mission_id):
+    """
+    Complete a mission
+    ---
+    tags:
+      - Missions
+    parameters:
+      - in: path
+        name: mission_id
+        required: true
+        type: integer
+    responses:
+      200:
+        description: Mission completed successfully
+      404:
+        description: Mission not found
+      400:
+        description: Already completed or not joined
+    """
     mission = Mission.query.get(mission_id)
     if not mission:
         return error_response("Mission not found", 404)

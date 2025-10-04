@@ -37,19 +37,37 @@ class User(db.Model):
     rsvps = db.relationship("RSVP", backref="user", cascade="all, delete-orphan")
 
 
+# class PasswordResetOTP(db.Model):
+#     __tablename__ = "password_reset_otps"
+
+#     id = db.Column(db.Integer, primary_key=True)
+#     email = db.Column(db.String(120), nullable=False)
+#     otp = db.Column(db.String(6), nullable=False)
+#     expiry = db.Column(db.DateTime, nullable=False)
+#     is_verified = db.Column(db.Boolean, default=False)
+#     request_count = db.Column(db.Integer, default=0)
+#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+#     def is_expired(self):
+#         return datetime.utcnow() > self.expiry
+
+
 class PasswordResetOTP(db.Model):
     __tablename__ = "password_reset_otps"
 
     id = db.Column(db.Integer, primary_key=True)
-    email = db.Column(db.String(120), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)  # NEW
     otp = db.Column(db.String(6), nullable=False)
-    expiry = db.Column(db.DateTime, nullable=False)
+    purpose = db.Column(db.String(50), default="password_reset")  # NEW
+    expires_at = db.Column(db.DateTime, nullable=False)  # renamed from expiry
     is_verified = db.Column(db.Boolean, default=False)
     request_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    user = db.relationship("User", backref="otps")  # NEW relationship
+
     def is_expired(self):
-        return datetime.utcnow() > self.expiry
+        return datetime.utcnow() > self.expires_at
 
 
 # ---- COMMUNITY ----
@@ -118,7 +136,8 @@ class Feedback(db.Model):
     downvotes = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-    feedback_id = db.Column(db.Integer, db.ForeignKey("feedback.id"), nullable=False)
+    feedback_id = db.Column(db.Integer, db.ForeignKey("feedback.id"), nullable=True)
+    parent = db.relationship("Feedback", remote_side=[id], backref="replies")
 
 
 # ---- EVENTS ----
@@ -142,7 +161,7 @@ class Event(db.Model):
     rsvps = db.relationship("RSVP", backref="event", cascade="all, delete-orphan")
 
     participants = db.relationship(
-        "User", secondary=event_participants, backref="events"
+        "User", secondary=event_participants, backref="joined_events"
     )
 
 

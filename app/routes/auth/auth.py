@@ -111,116 +111,6 @@ def firebase_login():
     })
 
 
-# @auth_bp.route("/signup", methods=["POST"])
-# def signup():
-#     """
-#     User signup
-#     ---
-#     tags:
-#       - Auth
-#     parameters:
-#       - in: body
-#         name: body
-#         required: true
-#         schema:
-#           type: object
-#           required:
-#             - firstname
-#             - lastname
-#             - email
-#             - phone
-#             - nationality
-#             - password
-#           properties:
-#             firstname: {type: string}
-#             lastname: {type: string}
-#             email: {type: string}
-#             phone: {type: string}
-#             nationality: {type: string}
-#             referral: {type: string}
-#             password: {type: string}
-#             username: {type: string}
-#     responses:
-#       201:
-#         description: Signup successful
-#       400:
-#         description: Email or phone already registered
-#     """
-
-#     data = request.get_json()
-
-#     # Required fields
-#     firstname = data.get("firstname")
-#     lastname = data.get("lastname")
-#     email = data.get("email")
-#     phone = data.get("phone")
-#     nationality = data.get("nationality")
-#     referral = data.get("referral")  # optional
-#     password = data.get("password")
-#     username = data.get("username")
-
-#     # Check existing users
-#     if User.query.filter_by(email=email).first():
-#         return jsonify({"error": "Email already registered"}), 400
-#     if User.query.filter_by(phone=phone).first():
-#         return jsonify({"error": "Phone already registered"}), 400
-
-#     # Generate a username if not provided
-#     if not username:
-#         base_username = re.sub(
-#             r"\W+", "", (firstname + lastname).lower()
-#         )  # remove spaces/special chars
-#         username = base_username
-#         counter = 1
-#         while User.query.filter_by(username=username).first():
-#             username = f"{base_username}{counter}"
-#             counter += 1
-#     else:
-#         # If provided, make sure it's unique
-#         if User.query.filter_by(username=username).first():
-#             return jsonify({"error": "Username already taken"}), 400
-
-#     verification_token = str(uuid.uuid4())
-
-#     user = User(
-#         firstname=firstname,
-#         lastname=lastname,
-#         fullname=f"{firstname} {lastname}",
-#         username=username,
-#         email=email,
-#         phone=phone,
-#         nationality=nationality,
-#         referral=referral,
-#         password_hash=hash_password(password),
-#         provider="local",
-#         is_verified=False,
-#         verification_token=verification_token,
-#     )
-#     db.session.add(user)
-#     db.session.commit()
-
-#     # Send verification email (prints in console for now)
-#     verify_url = f"https:api.nationalcake.ng/auth/verify/{verification_token}"
-#     # send_email(
-#     #     "Verify your email",
-#     #     user.email,
-#     #     f"Hi {user.firstname}, click the link to verify your account: {verify_url}",
-#     # )
-
-#     # generate verification token & send mail
-#     token = generate_verification_token(user.email)
-#     send_verification_email(user, token)
-
-#     return (
-#         jsonify(
-#             {
-#                 "message": "Signup successful, please verify your email!",
-#                 "username": user.username,
-#             }
-#         ),
-#         201,
-#     )
-
 # ---------------------------
 # SIGNUP
 # ---------------------------
@@ -259,84 +149,185 @@ def signup():
       400:
         description: Email or phone already registered
     """
+    try:
+        data = request.get_json()
 
-    data = request.get_json()
-    firstname = data.get("firstname")
-    lastname = data.get("lastname")
-    email = data.get("email")
-    phone = data.get("phone")
-    nationality = data.get("nationality")
-    referral = data.get("referral")
-    password = data.get("password")
-    username = data.get("username")
+        # ✅ Extract and validate input
+        required_fields = ["firstname", "lastname", "email", "phone", "password"]
+        missing = [field for field in required_fields if not data.get(field)]
+        if missing:
+            return jsonify({
+                "error": f"Missing required fields: {', '.join(missing)}"
+            }), 400
 
-    # Check uniqueness
-    if User.query.filter_by(email=email).first():
-        return jsonify({"error": "Email already registered"}), 400
-    if User.query.filter_by(phone=phone).first():
-        return jsonify({"error": "Phone already registered"}), 400
+        firstname = data["firstname"].strip()
+        lastname = data["lastname"].strip()
+        email = data["email"].strip().lower()
+        phone = data["phone"].strip()
+        nationality = data.get("nationality")
+        referral = data.get("referral")
+        password = data["password"]
+        username = data.get("username")
 
-    # Generate unique username if not provided
-    if not username:
-        base_username = re.sub(r"\W+", "", (firstname + lastname).lower())
-        username = base_username
-        counter = 1
-        while User.query.filter_by(username=username).first():
-            username = f"{base_username}{counter}"
-            counter += 1
-    else:
-        if User.query.filter_by(username=username).first():
-            return jsonify({"error": "Username already taken"}), 400
+        # ✅ Uniqueness checks
+        if User.query.filter_by(email=email).first():
+            return jsonify({"error": "Email already registered"}), 400
+        if User.query.filter_by(phone=phone).first():
+            return jsonify({"error": "Phone already registered"}), 400
 
-    # Create user (not verified yet)
-    user = User(
-        firstname=firstname,
-        lastname=lastname,
-        fullname=f"{firstname} {lastname}",
-        username=username,
-        email=email,
-        phone=phone,
-        nationality=nationality,
-        referral=referral,
-        password_hash=hash_password(password),
-        provider="local",
-        is_verified=False,
-    )
-    db.session.add(user)
-    db.session.commit()
+        # ✅ Generate unique username if needed
+        if not username:
+            base_username = re.sub(r"\W+", "", (firstname + lastname).lower())
+            username = base_username
+            counter = 1
+            while User.query.filter_by(username=username).first():
+                username = f"{base_username}{counter}"
+                counter += 1
+        else:
+            if User.query.filter_by(username=username).first():
+                return jsonify({"error": "Username already taken"}), 400
 
-    # Generate OTP (6-digit)
-    otp_code = str(random.randint(100000, 999999))
-    expiry = datetime.utcnow() + timedelta(minutes=10)
+        # ✅ Prepare user + OTP in memory (not yet committed)
+        user = User(
+            firstname=firstname,
+            lastname=lastname,
+            fullname=f"{firstname} {lastname}",
+            username=username,
+            email=email,
+            phone=phone,
+            nationality=nationality,
+            referral=referral,
+            password_hash=hash_password(password),
+            provider="local",
+            is_verified=False,
+        )
 
+        otp_code = str(random.randint(100000, 999999))
+        expiry = datetime.utcnow() + timedelta(minutes=10)
+
+        otp_entry = PasswordResetOTP(
+            user=user,  # direct relationship, will link automatically
+            otp=otp_code,
+            expires_at=expiry,
+            purpose="email_verification",
+        )
+
+        # ✅ Add both to session, but don't commit yet
+        db.session.add(user)
+        db.session.add(otp_entry)
+
+        # ✅ Attempt to send email before commit
+        try:
+            send_email(
+                "Verify your email",
+                user.email,
+                f"Hi {user.firstname},\n\n"
+                f"Your verification code is: {otp_code}\n\n"
+                f"It will expire in 10 minutes.",
+            )
+        except Exception as e:
+            # If email fails, rollback and abort
+            db.session.rollback()
+            print("Email send failed:", e)
+            return jsonify({
+                "error": "Failed to send verification email. Please try again later.",
+                "details": str(e)
+            }), 500
+
+        # ✅ Everything succeeded → Commit
+        db.session.commit()
+
+        return jsonify({
+            "message": "Signup successful! Please verify your email with the OTP code.",
+            "username": user.username,
+        }), 201
+
+    except Exception as e:
+        # ✅ Catch any unexpected exception
+        db.session.rollback()
+        print("Signup failed:", e)
+        return jsonify({
+            "error": "An unexpected error occurred during signup.",
+            "details": str(e)
+        }), 500
+
+    # data = request.get_json()
+    # firstname = data.get("firstname")
+    # lastname = data.get("lastname")
+    # email = data.get("email")
+    # phone = data.get("phone")
+    # nationality = data.get("nationality")
+    # referral = data.get("referral")
+    # password = data.get("password")
+    # username = data.get("username")
+
+    # # Check uniqueness
+    # if User.query.filter_by(email=email).first():
+    #     return jsonify({"error": "Email already registered"}), 400
+    # if User.query.filter_by(phone=phone).first():
+    #     return jsonify({"error": "Phone already registered"}), 400
+
+    # # Generate unique username if not provided
+    # if not username:
+    #     base_username = re.sub(r"\W+", "", (firstname + lastname).lower())
+    #     username = base_username
+    #     counter = 1
+    #     while User.query.filter_by(username=username).first():
+    #         username = f"{base_username}{counter}"
+    #         counter += 1
+    # else:
+    #     if User.query.filter_by(username=username).first():
+    #         return jsonify({"error": "Username already taken"}), 400
+
+    # # Create user (not verified yet)
+    # user = User(
+    #     firstname=firstname,
+    #     lastname=lastname,
+    #     fullname=f"{firstname} {lastname}",
+    #     username=username,
+    #     email=email,
+    #     phone=phone,
+    #     nationality=nationality,
+    #     referral=referral,
+    #     password_hash=hash_password(password),
+    #     provider="local",
+    #     is_verified=False,
+    # )
+    # db.session.add(user)
+    # db.session.commit()
+
+    # # Generate OTP (6-digit)
+    # otp_code = str(random.randint(100000, 999999))
+    # expiry = datetime.utcnow() + timedelta(minutes=10)
+
+    # # otp_entry = PasswordResetOTP(
+    # #     user_id=user.id,
+    # #     otp=otp_code,
+    # #     expires_at=expiry,
+    # #     purpose="email_verification",  # new purpose flag
+    # # )
     # otp_entry = PasswordResetOTP(
     #     user_id=user.id,
+    #     # email=user.email,   # <-- FIX
     #     otp=otp_code,
     #     expires_at=expiry,
-    #     purpose="email_verification",  # new purpose flag
+    #     purpose="email_verification",
     # )
-    otp_entry = PasswordResetOTP(
-        user_id=user.id,
-        # email=user.email,   # <-- FIX
-        otp=otp_code,
-        expires_at=expiry,
-        purpose="email_verification",
-    )
 
-    db.session.add(otp_entry)
-    db.session.commit()
+    # db.session.add(otp_entry)
+    # db.session.commit()
 
-    # Send OTP via email
-    send_email(
-        "Verify your email",
-        user.email,
-        f"Hi {user.firstname},\n\nYour verification code is: {otp_code}\n\nIt will expire in 10 minutes.",
-    )
+    # # Send OTP via email
+    # send_email(
+    #     "Verify your email",
+    #     user.email,
+    #     f"Hi {user.firstname},\n\nYour verification code is: {otp_code}\n\nIt will expire in 10 minutes.",
+    # )
 
-    return jsonify({
-        "message": "Signup successful, please verify your email with the OTP code!",
-        "username": user.username,
-    }), 201
+    # return jsonify({
+    #     "message": "Signup successful, please verify your email with the OTP code!",
+    #     "username": user.username,
+    # }), 201
 
 # ---------------------------
 # VERIFY OTP
@@ -391,23 +382,6 @@ def verify_email_otp():
     db.session.commit()
 
     return jsonify({"message": "Email verified successfully!"}), 200
-  
-
-# @auth_bp.route("/verify-email", methods=["GET"])
-# def verify_email():
-#     token = request.args.get("token")
-#     email = confirm_verification_token(token)
-#     if not email:
-#         return jsonify({"error": "Invalid or expired token"}), 400
-
-#     user = User.query.filter_by(email=email).first_or_404()
-#     if user.is_verified:
-#         return jsonify({"message": "Account already verified!"}), 200
-
-#     user.is_verified = True
-#     db.session.commit()
-
-#     return jsonify({"message": "Email verified successfully!"}), 200
 
 
 @auth_bp.route("/verify/<token>", methods=["GET"])
@@ -455,10 +429,10 @@ def login():
         schema:
           type: object
           required:
-            - fullname
+            - identifier
             - password
           properties:
-            fullname: {type: string}
+            identifier: {type: string like email or username}
             password: {type: string}
     responses:
       200:
@@ -473,22 +447,43 @@ def login():
       403:
         description: Please verify your email first
     """
-
     data = request.get_json()
-    fullname = data.get("fullname")
+    identifier = data.get("identifier")  # can be email or username
     password = data.get("password")
 
-    user = User.query.filter_by(fullname=fullname).first()
+    user = User.query.filter(
+        (User.email == identifier) | (User.username == identifier)
+    ).first()
+
     if not user or not verify_password(password, user.password_hash):
         return jsonify({"error": "Invalid credentials"}), 401
-    
+
     if not user.is_verified:
         return jsonify({"error": "Please verify your email first"}), 403
 
     access_token = create_access_token(identity=str(user.id))
     refresh_token = create_refresh_token(identity=str(user.id))
 
-    return jsonify({"access_token": access_token, "refresh_token": refresh_token}), 200
+    return jsonify({
+        "access_token": access_token,
+        "refresh_token": refresh_token
+    }), 200
+
+    # data = request.get_json()
+    # fullname = data.get("fullname")
+    # password = data.get("password")
+
+    # user = User.query.filter_by(fullname=fullname).first()
+    # if not user or not verify_password(password, user.password_hash):
+    #     return jsonify({"error": "Invalid credentials"}), 401
+
+    # if not user.is_verified:
+    #     return jsonify({"error": "Please verify your email first"}), 403
+
+    # access_token = create_access_token(identity=str(user.id))
+    # refresh_token = create_refresh_token(identity=str(user.id))
+
+    # return jsonify({"access_token": access_token, "refresh_token": refresh_token}), 200
 
 
 @auth_bp.route("/refresh", methods=["POST"])
@@ -557,7 +552,7 @@ def forgot_password():
 
     one_minute_ago = datetime.utcnow() - timedelta(minutes=1)
     recent_requests = PasswordResetOTP.query.filter(
-        PasswordResetOTP.email == email, PasswordResetOTP.created_at >= one_minute_ago
+        PasswordResetOTP.user_id == user.id, PasswordResetOTP.created_at >= one_minute_ago
     ).count()
 
     if recent_requests >= 5:
@@ -565,11 +560,43 @@ def forgot_password():
 
     # Generate new OTP
     otp = generate_otp()
-    reset_otp = PasswordResetOTP(
-        email=email, otp=otp, expiry=otp_expiry(), request_count=recent_requests + 1
-    )
-    db.session.add(reset_otp)
+    existing_otp = PasswordResetOTP.query.filter_by(user_id=user.id).first()
+    if existing_otp:
+        existing_otp.otp = otp
+        existing_otp.expires_at = otp_expiry()
+        existing_otp.request_count += 1
+        existing_otp.is_verified = False
+    else:
+        reset_otp = PasswordResetOTP(
+            user_id=user.id,
+            otp=otp,
+            expires_at=otp_expiry(),
+            request_count=recent_requests + 1,
+        )
+        db.session.add(reset_otp)
+    try:
+        send_email(
+            "Password Reset Request",
+            user.email,
+            f"Hi {user.firstname},\n\n"
+            f"Your password reset OTP is: {otp}\n\n"
+            f"This code will expire in 10 minutes.\n\n"
+            f"If you didn’t request this, please ignore this email.",
+        )
+    except Exception as e:
+        db.session.rollback()
+        print("Email send failed:", e)
+        return jsonify({
+            "message": "Failed to send password reset email. Please try again later.",
+            "details": str(e)
+        }), 500
+
     db.session.commit()
+    # reset_otp = PasswordResetOTP(
+    #     email=email, otp=otp, expiry=otp_expiry(), request_count=recent_requests + 1
+    # )
+    # db.session.add(reset_otp)
+    # db.session.commit()
 
     # For now, print OTP in console
     print(f"🔑 OTP for {email}: {otp}")
@@ -607,8 +634,12 @@ def verify_otp():
     if not email or not otp:
         return jsonify({"message": "Email and OTP are required"}), 400
 
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"message": "Invalid email"}), 400
+
     record = (
-        PasswordResetOTP.query.filter_by(email=email, otp=otp)
+        PasswordResetOTP.query.filter_by(user_id=user.id, otp=otp)
         .order_by(PasswordResetOTP.created_at.desc())
         .first()
     )
@@ -664,9 +695,12 @@ def reset_password():
     if new_password != confirm_password:
         return jsonify({"message": "Passwords do not match"}), 400
 
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"message": "User not found"}), 404
     # Check if there’s a verified OTP for this email
     record = (
-        PasswordResetOTP.query.filter_by(email=email, is_verified=True)
+        PasswordResetOTP.query.filter_by(user_id=user.id, is_verified=True)
         .order_by(PasswordResetOTP.created_at.desc())
         .first()
     )
@@ -682,7 +716,7 @@ def reset_password():
     if not user:
         return jsonify({"message": "User not found"}), 404
 
-    user.password = generate_password_hash(new_password)
+    user.password_hash = generate_password_hash(new_password)
     db.session.commit()
 
     return jsonify({"message": "Password reset successful"}), 200

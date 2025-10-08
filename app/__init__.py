@@ -1,5 +1,6 @@
 from flask import Flask
 import ssl, certifi
+from flask_cors import CORS
 
 ssl._create_default_https_context = lambda: ssl.create_default_context(
     cafile=certifi.where()
@@ -32,7 +33,10 @@ from flasgger import Swagger
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
-    
+
+    # ✅ Enable CORS
+    CORS(app, resources={r"/*": {"origins": "*"}})
+
     swagger_template = {
     "swagger": "2.0",
     "info": {
@@ -48,7 +52,6 @@ def create_app():
 }
 
     swagger = Swagger(app, template=swagger_template)
-
 
     # swagger = Swagger(app)
 

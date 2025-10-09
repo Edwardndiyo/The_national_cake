@@ -35,7 +35,13 @@ def create_app():
     app.config.from_object(Config)
 
     # ✅ Enable CORS
-    CORS(app, resources={r"/*": {"origins": "*"}})
+    # CORS(app, resources={r"/*": {"origins": "*"}})
+    CORS(
+        app,
+        resources={r"/*": {"origins": "*"}},
+        supports_credentials=True,
+        allow_headers="*",
+    )
 
     swagger_template = {
     "swagger": "2.0",

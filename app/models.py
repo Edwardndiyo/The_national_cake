@@ -212,6 +212,21 @@ class Mission(db.Model):
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+class Idea(db.Model):
+    __tablename__ = "ideas"
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(255), nullable=False)
+    content = db.Column(db.Text, nullable=False)
+    status = db.Column(db.String(20), default="submitted")  # submitted, validated, rejected
+    validated_by = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    points_awarded = db.Column(db.Integer, default=0)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    # Rel for mentoring/moderation
+    mentor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
+    
+    
 class MissionParticipant(db.Model):
     __tablename__ = "mission_participants"
 
@@ -241,6 +256,42 @@ class FeedbackVote(db.Model):
 
     def __repr__(self):
         return f"<FeedbackVote {self.vote_type} by User {self.user_id} on Feedback {self.feedback_id}>"
+
+
+class Poll(db.Model):
+    __tablename__ = "polls"
+    id = db.Column(db.Integer, primary_key=True)
+    question = db.Column(db.String(255), nullable=False)
+    post_id = db.Column(
+        db.Integer, db.ForeignKey("posts.id"), nullable=True
+    )  # Embed in forum?
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+    options = db.relationship(
+        "PollOption", backref="poll", cascade="all, delete-orphan"
+    )
+    votes = db.relationship("PollVote", backref="poll", cascade="all, delete-orphan")
+
+
+class PollOption(db.Model):
+    __tablename__ = "poll_options"
+    id = db.Column(db.Integer, primary_key=True)
+    text = db.Column(db.String(255), nullable=False)
+    votes_count = db.Column(db.Integer, default=0)
+    poll_id = db.Column(db.Integer, db.ForeignKey("polls.id"), nullable=False)
+
+
+class PollVote(db.Model):
+    __tablename__ = "poll_votes"
+    id = db.Column(db.Integer, primary_key=True)
+    option_id = db.Column(db.Integer, db.ForeignKey("poll_options.id"), nullable=False)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "poll_id", name="unique_user_poll_vote"),
+    )
 
 
 # class UserMission(db.Model):

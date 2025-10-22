@@ -225,8 +225,8 @@ class Idea(db.Model):
 
     # Rel for mentoring/moderation
     mentor_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=True)
-    
-    
+
+
 class MissionParticipant(db.Model):
     __tablename__ = "mission_participants"
 
@@ -262,16 +262,32 @@ class Poll(db.Model):
     __tablename__ = "polls"
     id = db.Column(db.Integer, primary_key=True)
     question = db.Column(db.String(255), nullable=False)
-    post_id = db.Column(
-        db.Integer, db.ForeignKey("posts.id"), nullable=True
-    )  # Embed in forum?
+    post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
 
     options = db.relationship(
         "PollOption", backref="poll", cascade="all, delete-orphan"
     )
-    votes = db.relationship("PollVote", backref="poll", cascade="all, delete-orphan")
+    votes = db.relationship(
+        "PollVote", backref="direct_votes", cascade="all, delete-orphan"
+    )  # Keep as-is
+
+
+# class Poll(db.Model):
+#     __tablename__ = "polls"
+#     id = db.Column(db.Integer, primary_key=True)
+#     question = db.Column(db.String(255), nullable=False)
+#     post_id = db.Column(
+#         db.Integer, db.ForeignKey("posts.id"), nullable=True
+#     )  # Embed in forum?
+#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+
+#     options = db.relationship(
+#         "PollOption", backref="poll", cascade="all, delete-orphan"
+#     )
+#     votes = db.relationship("PollVote", backref="poll", cascade="all, delete-orphan")
 
 
 class PollOption(db.Model):
@@ -286,12 +302,20 @@ class PollVote(db.Model):
     __tablename__ = "poll_votes"
     id = db.Column(db.Integer, primary_key=True)
     option_id = db.Column(db.Integer, db.ForeignKey("poll_options.id"), nullable=False)
+    poll_id = db.Column(db.Integer, db.ForeignKey("polls.id"), nullable=False)
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     __table_args__ = (
         db.UniqueConstraint("user_id", "poll_id", name="unique_user_poll_vote"),
     )
+
+    user = db.relationship("User", backref="poll_votes", lazy=True)
+    poll = db.relationship("Poll", backref="direct_votes", lazy=True)
+    option = db.relationship("PollOption", backref="votes", lazy=True)
+
+    def __repr__(self):
+        return f"<PollVote user_id={self.user_id} poll_id={self.poll_id} option_id={self.option_id}>"
 
 
 # class UserMission(db.Model):

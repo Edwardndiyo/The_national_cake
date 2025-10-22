@@ -6,7 +6,7 @@ from flask_jwt_extended import (
     get_jwt_identity,
 )
 from app.extensions import db
-from app.models import User, PasswordResetOTP
+from app.models import User, PasswordResetOTP, Zone, Post, Comment, Like
 from app.utils.security import hash_password, verify_password, generate_otp, otp_expiry
 from app.utils.responses import error_response, success_response
 from app.utils.firebase import verify_firebase_token
@@ -464,26 +464,61 @@ def login():
     access_token = create_access_token(identity=str(user.id))
     refresh_token = create_refresh_token(identity=str(user.id))
 
-    return jsonify({
-        "access_token": access_token,
-        "refresh_token": refresh_token
-    }), 200
+    # return jsonify({
+    #     "access_token": access_token,
+    #     "refresh_token": refresh_token
+    # }), 200
 
-    # data = request.get_json()
-    # fullname = data.get("fullname")
-    # password = data.get("password")
+    # 🧠 Fetch latest 10 community posts across all zones
+    posts = (
+        db.session.query(Post, User.fullname, User.avatar, Zone.name.label("zone_name"))
+        .join(User, User.id == Post.user_id)
+        .join(Zone, Zone.id == Post.zone_id)
+        .order_by(Post.created_at.desc())
+        .limit(10)
+        .all()
+    )
 
-    # user = User.query.filter_by(fullname=fullname).first()
-    # if not user or not verify_password(password, user.password_hash):
-    #     return jsonify({"error": "Invalid credentials"}), 401
+    feed = []
+    for post, author_name, author_avatar, zone_name in posts:
+        comment_count = Comment.query.filter_by(post_id=post.id).count()
+        like_count = Like.query.filter_by(post_id=post.id).count()
+        feed.append(
+            {
+                "id": post.id,
+                "title": post.title,
+                "content": post.content,
+                "zone": zone_name,
+                "author": author_name,
+                "author_avatar": author_avatar,
+                "likes": like_count,
+                "comments": comment_count,
+                "created_at": post.created_at.isoformat(),
+            }
+        )
 
-    # if not user.is_verified:
-    #     return jsonify({"error": "Please verify your email first"}), 403
-
-    # access_token = create_access_token(identity=str(user.id))
-    # refresh_token = create_refresh_token(identity=str(user.id))
-
-    # return jsonify({"access_token": access_token, "refresh_token": refresh_token}), 200
+    return (
+        jsonify(
+            {
+                "access_token": access_token,
+                "refresh_token": refresh_token,
+                "user": {
+                    "id": user.id,
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "email": user.email,
+                    "avatar": user.avatar,
+                    "nationality": user.nationality,
+                    "referral": user.referral,
+                    "provider": user.provider,
+                    "is_verified": user.is_verified,
+                    "joined_at": user.created_at.isoformat(),
+                },
+                "community_feed": feed 
+            }
+        ),
+        200,
+    )
 
 
 @auth_bp.route("/refresh", methods=["POST"])

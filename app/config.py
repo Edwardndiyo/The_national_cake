@@ -6,7 +6,7 @@ class Config:
 
     # Database
     SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DATABASE_URL", "sqlite:///ncc_dev.db"  # fallback
+        "DATABASE_URL", "sqlite:////tmp/ncc_dev.db"  # fallback
     )
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 

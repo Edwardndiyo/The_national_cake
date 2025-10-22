@@ -24,7 +24,7 @@ jobs:
 
       - name: Zip application
         run: |
-          zip -r app.zip . -x "*.git*" "*__pycache__*" "*.github*" "*.venv*" "venv/*"
+          zip -r app.zip . -x "*.git*" "*__pycache__*" "*.github*" "*.venv*" "venv/*" "instance/*"
 
       - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v21

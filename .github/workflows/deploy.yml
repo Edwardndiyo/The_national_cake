@@ -24,7 +24,7 @@ jobs:
 
       - name: Zip application
         run: |
-          zip -r app.zip . -x "*.git*" "*__pycache__*" "*.github*" "*.venv*" "venv/*" 
+          zip -r app.zip . -x "*.git*" "*__pycache__*" "*.github*" "*.venv*" "venv/*" "instance/*.db" "*.sqlite3" "*.db" "instance/*"
 
       - name: Deploy to Elastic Beanstalk
         uses: einaregilsson/beanstalk-deploy@v21
@@ -36,3 +36,6 @@ jobs:
           version_label: v-${{ github.run_number }}
           region: eu-west-1
           deployment_package: app.zip
+          wait_for_deployment: true
+          deployment_timeout: 900  # 15 mins
+          check_health: true

@@ -83,5 +83,6 @@ coverage.xml
 .hypothesis/
 .pytest_cache/
 
+ndiyo.pem
 
 firebase_service_key.json

@@ -1,10 +1,10 @@
 from flask import Flask
-import ssl, certifi
+# import ssl, certifi
 from flask_cors import CORS
 
-ssl._create_default_https_context = lambda: ssl.create_default_context(
-    cafile=certifi.where()
-)
+# ssl._create_default_https_context = lambda: ssl.create_default_context(
+#     cafile=certifi.where()
+# )
 
 # from flask_sqlalchemy import SQLAlchemy
 # from flask_migrate import Migrate

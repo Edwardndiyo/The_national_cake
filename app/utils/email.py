@@ -11,15 +11,18 @@ def send_email(subject, recipient, body):
     msg["To"] = recipient
 
     try:
-        with smtplib.SMTP_SSL(
+        with smtplib.SMTP(
             app.config["MAIL_SERVER"], app.config["MAIL_PORT"]
         ) as server:
+            server.starttls()
             server.login(app.config["MAIL_USERNAME"], app.config["MAIL_PASSWORD"])
             server.send_message(msg)
         print("✅ Email sent successfully")
     except Exception as e:
         print("❌ Email send failed:", e)
         raise
+
+
 
 
 # import smtplib

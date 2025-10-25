@@ -17,6 +17,9 @@ from app.utils.email import send_email
 import random
 import re
 from datetime import datetime, timedelta
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 auth_bp = Blueprint("auth", __name__, url_prefix="/auth")
@@ -229,6 +232,8 @@ def signup():
             # If email fails, rollback and abort
             db.session.rollback()
             print("Email send failed:", e)
+            logger.exception(f"Email send failed: {e}")
+
             return jsonify({
                 "error": "Failed to send verification email. Please try again later.",
                 "details": str(e)
@@ -246,6 +251,8 @@ def signup():
         # ✅ Catch any unexpected exception
         db.session.rollback()
         print("Signup failed:", e)
+        logger.exception(f"Signup failed with error: {e}")
+
         return jsonify({
             "error": "An unexpected error occurred during signup.",
             "details": str(e)

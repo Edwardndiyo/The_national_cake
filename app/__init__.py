@@ -93,3 +93,70 @@ def create_app():
     register_middlewares(app)
 
     return app
+
+
+
+
+# Connectivity & security
+# Endpoint & port
+# Endpoint
+# nationalcake-aurora.cp0caiqkk957.eu-west-1.rds.amazonaws.com
+# Port
+# 5432
+# Networking
+# Availability Zone
+# eu-west-1c
+# VPC
+# vpc-06f451f3ddc9c72f9
+# Subnet group
+# rds-ec2-db-subnet-group-1
+# Subnets
+# subnet-040ca364ae24f73f2
+# subnet-024b947f079083f0c
+# subnet-0a9afe6fa35ef9fa6
+# Network type
+# IPv4
+# Security
+# VPC security groups
+# rds-ec2-3 (sg-05d9437e496c2256e)
+# Active
+# Publicly accessible
+# No
+# Certificate authority
+# Info
+# rds-ca-rsa2048-g1
+
+
+
+
+
+# EB - Elastic Beanstalk
+
+# nstances
+# IMDSv1
+# Disabled
+# EC2 Security Groups
+# awseb-e-wpt8vtawft-stack-AWSEBSecurityGroup-lJTjmjG4zsYd
+# Capacity
+# Environment type
+# Load balanced
+# Min instances
+# 1
+# Max instances
+# 4
+# Fleet composition
+# On-Demand instances
+# On-demand base
+# 0
+# On-demand above base
+# 70
+# Capacity rebalancing
+# Disabled
+# Scaling cooldown
+# 360
+# Processor type
+# x86_64
+# Instance types
+# t3.micro, t3.small
+# AMI ID
+# ami-0bb15d1fcb59d4d07

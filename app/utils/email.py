@@ -5,32 +5,38 @@ from flask import current_app
 
 
 def send_email(subject: str, to_email: str, body: str, from_email: str = None):
+    """
+    Send email via Resend API (v0.9+).
+    """
     api_key = os.getenv("RESEND_API_KEY")
     if not api_key:
         current_app.logger.warning("RESEND_API_KEY missing — email skipped")
         return False
 
-    resend.api_key = api_key  # ← v0.9+ init
+    resend.api_key = api_key
 
     sender = from_email or os.getenv("MAIL_DEFAULT_SENDER", "onboarding@resend.dev")
 
     try:
         response = resend.Emails.send(
-            from_=sender,
+            from_=sender,  # ← CHANGE THIS TO: from=sender
             to=[to_email],
             subject=subject,
             text=body,
         )
 
+        # Log full response for debugging
+        current_app.logger.info(f"Resend response: {response}")
+
         if response and response.get("id"):
-            current_app.logger.info(f"Email sent: {response['id']}")
+            current_app.logger.info(f"Email queued: {response['id']} → {to_email}")
             return True
         else:
-            current_app.logger.error(f"Resend error: {response}")
+            current_app.logger.error(f"Resend failed (no ID): {response}")
             return False
 
     except Exception as e:
-        current_app.logger.error(f"Email failed: {e}")
+        current_app.logger.error(f"Email exception: {str(e)}")
         return False
 
 

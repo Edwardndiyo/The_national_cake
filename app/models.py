@@ -274,22 +274,6 @@ class Poll(db.Model):
     )  # Keep as-is
 
 
-# class Poll(db.Model):
-#     __tablename__ = "polls"
-#     id = db.Column(db.Integer, primary_key=True)
-#     question = db.Column(db.String(255), nullable=False)
-#     post_id = db.Column(
-#         db.Integer, db.ForeignKey("posts.id"), nullable=True
-#     )  # Embed in forum?
-#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-
-#     options = db.relationship(
-#         "PollOption", backref="poll", cascade="all, delete-orphan"
-#     )
-#     votes = db.relationship("PollVote", backref="poll", cascade="all, delete-orphan")
-
-
 class PollOption(db.Model):
     __tablename__ = "poll_options"
     id = db.Column(db.Integer, primary_key=True)
@@ -318,15 +302,3 @@ class PollVote(db.Model):
         return f"<PollVote user_id={self.user_id} poll_id={self.poll_id} option_id={self.option_id}>"
 
 
-# class UserMission(db.Model):
-#     __tablename__ = "user_missions"
-#     id = db.Column(db.Integer, primary_key=True)
-#     status = db.Column(db.String(20), default="in_progress")  # in_progress, completed
-#     completed_at = db.Column(db.DateTime)
-
-#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-#     mission_id = db.Column(db.Integer, db.ForeignKey("missions.id"), nullable=False)
-
-#     __table_args__ = (
-#         db.UniqueConstraint("user_id", "mission_id", name="unique_user_mission"),
-#     )

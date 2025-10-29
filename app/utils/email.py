@@ -1,68 +1,36 @@
 # app/utils/email.py
 import os
+import resend
 from flask import current_app
-from resend import Resend
-from resend.exceptions import ResendException
-
-# Global Resend client (lazy init)
-_resend_client = None
-
-
-def _get_resend_client():
-    global _resend_client
-    if _resend_client is None:
-        api_key = os.getenv("RESEND_API_KEY", "onboarding@resend.dev")
-        if not api_key:
-            current_app.logger.warning("RESEND_API_KEY not set—emails will be skipped")
-            _resend_client = None
-        else:
-            _resend_client = Resend(api_key=api_key)
-    return _resend_client
 
 
 def send_email(subject: str, to_email: str, body: str, from_email: str = None):
-    """
-    Send email via Resend API.
-
-    Args:
-        subject: Email subject
-        to_email: Recipient email
-        body: Plaintext body (or HTML if you add html=body)
-        from_email: Optional sender (defaults to MAIL_DEFAULT_SENDER env var)
-
-    Returns:
-        bool: True if sent, False on failure (logs error, doesn't raise)
-
-    Secure: Env vars only, no hard-codes. Fails gracefully.
-    """
-    client = _get_resend_client()
-    if not client:
-        current_app.logger.warning(f"Email skipped to {to_email} (no API key)")
+    api_key = os.getenv("RESEND_API_KEY")
+    if not api_key:
+        current_app.logger.warning("RESEND_API_KEY missing — email skipped")
         return False
 
-    sender = from_email or os.getenv("MAIL_DEFAULT_SENDER", "no-reply@nationalcake.ng")
+    resend.api_key = api_key  # ← v0.9+ init
+
+    sender = from_email or os.getenv("MAIL_DEFAULT_SENDER", "onboarding@resend.dev")
 
     try:
-        response = client.emails.send(
+        response = resend.Emails.send(
             from_=sender,
             to=[to_email],
             subject=subject,
-            text=body,  # Plaintext for your OTP style
-            # html=body if you want HTML (e.g., for links)
+            text=body,
         )
-        if response.status_code in (200, 202):
-            current_app.logger.info(f"Email sent successfully to {to_email}")
+
+        if response and response.get("id"):
+            current_app.logger.info(f"Email sent: {response['id']}")
             return True
         else:
-            current_app.logger.error(
-                f"Resend API error: {response.status_code} - {response.body}"
-            )
+            current_app.logger.error(f"Resend error: {response}")
             return False
-    except ResendException as e:
-        current_app.logger.error(f"Resend send failed: {str(e)}")
-        return False
+
     except Exception as e:
-        current_app.logger.error(f"Unexpected email error: {str(e)}")
+        current_app.logger.error(f"Email failed: {e}")
         return False
 
 

@@ -11,7 +11,7 @@ _resend_client = None
 def _get_resend_client():
     global _resend_client
     if _resend_client is None:
-        api_key = os.getenv("RESEND_API_KEY")
+        api_key = os.getenv("RESEND_API_KEY", "onboarding@resend.dev")
         if not api_key:
             current_app.logger.warning("RESEND_API_KEY not set—emails will be skipped")
             _resend_client = None

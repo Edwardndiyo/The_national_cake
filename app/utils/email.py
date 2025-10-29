@@ -19,7 +19,7 @@ def send_email(subject: str, to_email: str, body: str, from_email: str = None):
 
     try:
         response = resend.Emails.send(
-            from_=sender,  # ← CHANGE THIS TO: from=sender
+            from=sender,  # ← CHANGE THIS TO: from=sender
             to=[to_email],
             subject=subject,
             text=body,

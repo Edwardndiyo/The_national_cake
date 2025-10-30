@@ -15,7 +15,7 @@ community_bp = Blueprint("community", __name__, url_prefix="/community")
 # ZONES → ERAS (new endpoint name kept for backward compat)
 # -------------------------------------------------
 @community_bp.route("/zones", methods=["GET"])
-@token_required(optional=True)  # works for guests too
+@token_required  # works for guests too
 def list_zones(current_user=None):
     """
     List all Eras (with member/post counts and joined status)
@@ -418,7 +418,7 @@ def time_ago(dt):
 
 
 @community_bp.route("/posts", methods=["GET"])
-@token_required(optional=True)
+@token_required
 def list_posts(current_user=None):
     """
     List posts with pagination and filters

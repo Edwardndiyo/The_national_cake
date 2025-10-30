@@ -70,6 +70,28 @@ def create_app():
     socketio.init_app(app)
     mail.init_app(app)
 
+    # --- AUTO MIGRATE ON FIRST REQUEST ---
+    @app.before_request
+    def auto_migrate():
+        if not hasattr(auto_migrate, "ran"):
+            with app.app_context():
+                from flask_migrate import upgrade
+
+                upgrade()  # Runs `alembic upgrade head`
+                print("Migrations applied!")
+            auto_migrate.ran = True
+
+    # --- CLI COMMAND (optional) ---
+    @app.cli.command("db-migrate")
+    def db_migrate():
+        """Run migrations manually"""
+        with app.app_context():
+            from flask_migrate import upgrade
+
+            upgrade()
+            print("Migrations applied via CLI!")
+            
+
     # Import models for migration detection
 
     # Register routes
@@ -93,8 +115,6 @@ def create_app():
     register_middlewares(app)
 
     return app
-
-
 
 
 # Connectivity & security
@@ -125,9 +145,6 @@ def create_app():
 # Certificate authority
 # Info
 # rds-ca-rsa2048-g1
-
-
-
 
 
 # EB - Elastic Beanstalk

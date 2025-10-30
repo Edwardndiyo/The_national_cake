@@ -169,27 +169,38 @@ def create_app():
 
     with app.app_context():
         try:
-            # Check if year_range column exists
             from sqlalchemy import text
 
+            # Check and add missing columns to eras table
             result = db.session.execute(
                 text(
                     """
                 SELECT column_name 
                 FROM information_schema.columns 
-                WHERE table_name='eras' AND column_name='year_range'
+                WHERE table_name='eras'
             """
                 )
             )
-            if not result.fetchone():
-                print("🔄 Adding missing 'year_range' column to eras table...")
-                db.session.execute(
-                    text("ALTER TABLE eras ADD COLUMN year_range VARCHAR(50)")
-                )
+            existing_columns = {row[0] for row in result}
+
+            missing_columns = []
+            if "year_range" not in existing_columns:
+                missing_columns.append("ADD COLUMN year_range VARCHAR(50)")
+            if "image" not in existing_columns:
+                missing_columns.append("ADD COLUMN image VARCHAR(255)")
+
+            if missing_columns:
+                print("🔄 Adding missing columns to eras table...")
+                alter_sql = f"ALTER TABLE eras {', '.join(missing_columns)}"
+                db.session.execute(text(alter_sql))
                 db.session.commit()
-                print("✅ Added missing column!")
+                print("✅ Added missing columns to eras table!")
+
         except Exception as e:
-            print(f"❌ Could not auto-add column: {e}")
+            print(f"❌ Could not auto-add columns: {e}")
+            db.session.rollback()
+            
+
     # with app.app_context():
     #     try:
     #         from flask_migrate import upgrade

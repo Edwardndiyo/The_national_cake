@@ -166,76 +166,39 @@ def create_app():
     mail.init_app(app)
 
     # ✅ Run migrations ONLY ONCE when app starts
+
     with app.app_context():
         try:
-            from flask_migrate import upgrade
+            # Check if year_range column exists
+            from sqlalchemy import text
 
-            print("🔄 Applying migrations on startup...")
-            upgrade()
-            print("✅ Migrations applied successfully!")
+            result = db.session.execute(
+                text(
+                    """
+                SELECT column_name 
+                FROM information_schema.columns 
+                WHERE table_name='eras' AND column_name='year_range'
+            """
+                )
+            )
+            if not result.fetchone():
+                print("🔄 Adding missing 'year_range' column to eras table...")
+                db.session.execute(
+                    text("ALTER TABLE eras ADD COLUMN year_range VARCHAR(50)")
+                )
+                db.session.commit()
+                print("✅ Added missing column!")
         except Exception as e:
-            print(f"❌ Migration failed: {e}")
-            
-    # # --- SMART MIGRATION THAT HANDLES DUPLICATE TABLES ---
-    # @app.before_request
-    # def auto_migrate():
-    #     if not hasattr(auto_migrate, "ran"):
-    #         with app.app_context():
-    #             try:
-    #                 from flask_migrate import upgrade
+            print(f"❌ Could not auto-add column: {e}")
+    # with app.app_context():
+    #     try:
+    #         from flask_migrate import upgrade
 
-    #                 print("🔄 Attempting to apply migrations...")
-    #                 upgrade()  # Runs `alembic upgrade head`
-    #                 print("✅ Migrations applied successfully!")
-
-    #             except Exception as e:
-    #                 error_str = str(e)
-    #                 print(f"❌ Migration failed: {error_str}")
-
-    #                 # Check if it's a duplicate table error
-    #                 if "already exists" in error_str or "DuplicateTable" in error_str:
-    #                     print("🔄 Duplicate table detected - attempting recovery...")
-
-    #                     try:
-    #                         # Method 1: Try to fix by stamping current head
-    #                         from flask_migrate import stamp
-
-    #                         stamp()
-    #                         print("✅ Marked current migrations as applied")
-
-    #                     except Exception as stamp_error:
-    #                         print(f"❌ Stamping failed: {stamp_error}")
-    #                         print("🔄 Trying alternative recovery...")
-
-    #                         # Method 2: Create a new migration to fix the issue
-    #                         try:
-    #                             from flask_migrate import migrate as migrate_cmd
-
-    #                             migrate_cmd(message="fix_duplicate_tables")
-    #                             upgrade()
-    #                             print("✅ Created and applied fix migration")
-
-    #                         except Exception as migrate_error:
-    #                             print(
-    #                                 f"❌ Alternative recovery failed: {migrate_error}"
-    #                             )
-    #                             print("🚨 Manual intervention may be required")
-
-    #                 else:
-    #                     # For other errors, try a different approach
-    #                     print("🔄 Trying fallback migration strategy...")
-    #                     try:
-    #                         # Try to create a new migration
-    #                         from flask_migrate import migrate as migrate_cmd
-
-    #                         migrate_cmd(message="auto_fix")
-    #                         upgrade()
-    #                         print("✅ Fallback migration successful!")
-
-    #                     except Exception as fallback_error:
-    #                         print(f"❌ All migration attempts failed: {fallback_error}")
-
-    #         auto_migrate.ran = True
+    #         print("🔄 Applying migrations on startup...")
+    #         upgrade()
+    #         print("✅ Migrations applied successfully!")
+    #     except Exception as e:
+    #         print(f"❌ Migration failed: {e}")
 
     # --- SIMPLE MIGRATION COMMAND ---
     @app.cli.command("db-migrate")

@@ -165,66 +165,77 @@ def create_app():
     socketio.init_app(app)
     mail.init_app(app)
 
-    # --- SMART MIGRATION THAT HANDLES DUPLICATE TABLES ---
-    @app.before_request
-    def auto_migrate():
-        if not hasattr(auto_migrate, "ran"):
-            with app.app_context():
-                try:
-                    from flask_migrate import upgrade
+    # ✅ Run migrations ONLY ONCE when app starts
+    with app.app_context():
+        try:
+            from flask_migrate import upgrade
 
-                    print("🔄 Attempting to apply migrations...")
-                    upgrade()  # Runs `alembic upgrade head`
-                    print("✅ Migrations applied successfully!")
+            print("🔄 Applying migrations on startup...")
+            upgrade()
+            print("✅ Migrations applied successfully!")
+        except Exception as e:
+            print(f"❌ Migration failed: {e}")
+            
+    # # --- SMART MIGRATION THAT HANDLES DUPLICATE TABLES ---
+    # @app.before_request
+    # def auto_migrate():
+    #     if not hasattr(auto_migrate, "ran"):
+    #         with app.app_context():
+    #             try:
+    #                 from flask_migrate import upgrade
 
-                except Exception as e:
-                    error_str = str(e)
-                    print(f"❌ Migration failed: {error_str}")
+    #                 print("🔄 Attempting to apply migrations...")
+    #                 upgrade()  # Runs `alembic upgrade head`
+    #                 print("✅ Migrations applied successfully!")
 
-                    # Check if it's a duplicate table error
-                    if "already exists" in error_str or "DuplicateTable" in error_str:
-                        print("🔄 Duplicate table detected - attempting recovery...")
+    #             except Exception as e:
+    #                 error_str = str(e)
+    #                 print(f"❌ Migration failed: {error_str}")
 
-                        try:
-                            # Method 1: Try to fix by stamping current head
-                            from flask_migrate import stamp
+    #                 # Check if it's a duplicate table error
+    #                 if "already exists" in error_str or "DuplicateTable" in error_str:
+    #                     print("🔄 Duplicate table detected - attempting recovery...")
 
-                            stamp()
-                            print("✅ Marked current migrations as applied")
+    #                     try:
+    #                         # Method 1: Try to fix by stamping current head
+    #                         from flask_migrate import stamp
 
-                        except Exception as stamp_error:
-                            print(f"❌ Stamping failed: {stamp_error}")
-                            print("🔄 Trying alternative recovery...")
+    #                         stamp()
+    #                         print("✅ Marked current migrations as applied")
 
-                            # Method 2: Create a new migration to fix the issue
-                            try:
-                                from flask_migrate import migrate as migrate_cmd
+    #                     except Exception as stamp_error:
+    #                         print(f"❌ Stamping failed: {stamp_error}")
+    #                         print("🔄 Trying alternative recovery...")
 
-                                migrate_cmd(message="fix_duplicate_tables")
-                                upgrade()
-                                print("✅ Created and applied fix migration")
+    #                         # Method 2: Create a new migration to fix the issue
+    #                         try:
+    #                             from flask_migrate import migrate as migrate_cmd
 
-                            except Exception as migrate_error:
-                                print(
-                                    f"❌ Alternative recovery failed: {migrate_error}"
-                                )
-                                print("🚨 Manual intervention may be required")
+    #                             migrate_cmd(message="fix_duplicate_tables")
+    #                             upgrade()
+    #                             print("✅ Created and applied fix migration")
 
-                    else:
-                        # For other errors, try a different approach
-                        print("🔄 Trying fallback migration strategy...")
-                        try:
-                            # Try to create a new migration
-                            from flask_migrate import migrate as migrate_cmd
+    #                         except Exception as migrate_error:
+    #                             print(
+    #                                 f"❌ Alternative recovery failed: {migrate_error}"
+    #                             )
+    #                             print("🚨 Manual intervention may be required")
 
-                            migrate_cmd(message="auto_fix")
-                            upgrade()
-                            print("✅ Fallback migration successful!")
+    #                 else:
+    #                     # For other errors, try a different approach
+    #                     print("🔄 Trying fallback migration strategy...")
+    #                     try:
+    #                         # Try to create a new migration
+    #                         from flask_migrate import migrate as migrate_cmd
 
-                        except Exception as fallback_error:
-                            print(f"❌ All migration attempts failed: {fallback_error}")
+    #                         migrate_cmd(message="auto_fix")
+    #                         upgrade()
+    #                         print("✅ Fallback migration successful!")
 
-            auto_migrate.ran = True
+    #                     except Exception as fallback_error:
+    #                         print(f"❌ All migration attempts failed: {fallback_error}")
+
+    #         auto_migrate.ran = True
 
     # --- SIMPLE MIGRATION COMMAND ---
     @app.cli.command("db-migrate")

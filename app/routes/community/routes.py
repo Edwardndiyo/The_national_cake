@@ -156,7 +156,8 @@ def list_zones(current_user=None):
 @community_bp.route("/zones", methods=["POST"])
 # @token_required
 # @roles_required("admin")
-def create_zone(current_user):
+# def create_zone(current_user):
+def create_zone():
     """
     Create a new **Era** (with optional first Zone)
     ---

@@ -24,7 +24,7 @@ app = create_app()
 with app.app_context():
     success = send_email(
         subject="Test OTP",
-        to_email="ndiyoedward@gmail.com",
+        to_email="ndiyoedward@icloud.com",
         body="Your code is: 123456",
     )
     print(f"Success: {success}")

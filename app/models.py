@@ -2,6 +2,13 @@ from app import db
 from datetime import datetime, timedelta
 
 
+user_era_membership = db.Table(
+    "user_era_membership",
+    db.Column("user_id", db.Integer, db.ForeignKey("users.id"), primary_key=True),
+    db.Column("era_id", db.Integer, db.ForeignKey("eras.id"), primary_key=True),
+    db.Column("joined_at", db.DateTime, default=datetime.utcnow),
+)
+
 # ---- USERS ----
 class User(db.Model):
     __tablename__ = "users"
@@ -31,6 +38,11 @@ class User(db.Model):
     # Relationships
     missions = db.relationship(
         "MissionParticipant", back_populates="user", cascade="all, delete-orphan"
+    )
+    joined_eras = db.relationship(
+        "Era",
+        secondary=user_era_membership,
+        back_populates="members",
     )
     badges = db.relationship("UserBadge", backref="user", cascade="all, delete-orphan")
     events = db.relationship("Event", backref="creator", cascade="all, delete-orphan")
@@ -75,12 +87,18 @@ class Era(db.Model):
     __tablename__ = "eras"
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(100), unique=True, nullable=False)
+    year_range = db.Column(db.String(50))  # e.g. "1950s-1980s"
+    image = db.Column(db.String(255))
     description = db.Column(db.Text)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # relationships
     zones = db.relationship("Zone", backref="era", cascade="all, delete-orphan")
-
+    members = db.relationship(
+        "User",
+        secondary=user_era_membership,
+        back_populates="joined_eras",
+    )
 
 class Zone(db.Model):
     __tablename__ = "zones"
@@ -97,6 +115,7 @@ class Post(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     title = db.Column(db.String(255), nullable=False)
     content = db.Column(db.Text, nullable=False)
+    media = db.Column(db.Text, nullable=True)
     pinned = db.Column(db.Boolean, default=False)
     hot_thread = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -300,5 +319,3 @@ class PollVote(db.Model):
 
     def __repr__(self):
         return f"<PollVote user_id={self.user_id} poll_id={self.poll_id} option_id={self.option_id}>"
-
-

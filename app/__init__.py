@@ -64,8 +64,8 @@ def create_app():
     # Initialize extensions
     db.init_app(app)
     migrate.init_app(app, db)
-    with app.app_context():
-        db.create_all()  # Fallback for initial table creation
+    # with app.app_context():
+    #     db.create_all()  # Fallback for initial table creation
     jwt.init_app(app)
     socketio.init_app(app)
     mail.init_app(app)

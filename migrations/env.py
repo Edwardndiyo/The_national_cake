@@ -1,17 +1,39 @@
+# import logging
+# from logging.config import fileConfig
+
+# from flask import current_app
+
+# from alembic import context
+
+# # this is the Alembic Config object, which provides
+# # access to the values within the .ini file in use.
+# config = context.config
 import logging
-from logging.config import fileConfig
-
 from flask import current_app
-
+import os
+from logging.config import fileConfig
+from sqlalchemy import engine_from_config, pool
 from alembic import context
 
-# this is the Alembic Config object, which provides
-# access to the values within the .ini file in use.
+# this is the Alembic Config object
 config = context.config
 
+# COMMENTED OUT – not needed for production
+# fileConfig(config.config_file_name)
+
+# Add your model's MetaData object here for 'autogenerate' support
+from app import db
+
+target_metadata = db.metadata
+
+# Use DATABASE_URL from Render
+if os.environ.get("DATABASE_URL"):
+    config.set_main_option("sqlalchemy.url", os.environ.get("DATABASE_URL"))
+    
+    
 # Interpret the config file for Python logging.
 # This line sets up loggers basically.
-fileConfig(config.config_file_name)
+# fileConfig(config.config_file_name)
 logger = logging.getLogger('alembic.env')
 
 

@@ -154,10 +154,10 @@ def list_zones(current_user=None):
 
 
 @community_bp.route("/zones", methods=["POST"])
-# @token_required
-# @roles_required("admin")
-# def create_zone(current_user):
-def create_zone():
+@token_required
+@roles_required("admin")
+def create_zone(current_user):
+# def create_zone():
     """
     Create a new **Era** (with optional first Zone)
     ---
@@ -199,7 +199,7 @@ def create_zone():
             "description": era.description or "",
             "image": era.image or "",
         },
-        broadcast=True,
+        # broadcast=True,
     )
 
     return success_response({"era_id": era.id}, "Era created successfully", status=201)
@@ -235,7 +235,7 @@ def join_era(current_user, era_id):
             "era_id": era.id,
             "username": current_user.username,
         },
-        broadcast=True,
+        # broadcast=True,
     )
 
     return success_response(message="Joined era")
@@ -396,7 +396,7 @@ def create_post(current_user):
             },
             "zone": {"id": zone.id, "name": zone.name},
         },
-        broadcast=True,
+        # broadcast=True,
     )
 
     return success_response({"post_id": post.id}, "Post created", 201)

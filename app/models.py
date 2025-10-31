@@ -42,7 +42,7 @@ class User(db.Model):
     joined_eras = db.relationship(
         "Era",
         secondary=user_era_membership,
-        backref="members",
+        back_populates="members",
     )
     badges = db.relationship("UserBadge", backref="user", cascade="all, delete-orphan")
     events = db.relationship("Event", backref="creator", cascade="all, delete-orphan")

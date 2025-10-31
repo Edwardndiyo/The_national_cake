@@ -46,8 +46,12 @@ def list_zones(current_user=None):
     """
     joined_only = request.args.get("joined", "").lower() == "true"
 
-    # Base query – always include era + aggregates
-    base = (
+    # Handle joined filter for guest users
+    if joined_only and not current_user:
+        return success_response([], "No joined eras for unauthenticated user")
+
+    # Base query for all eras with counts
+    base_query = (
         db.session.query(
             Era,
             func.count(distinct(Post.id)).label("post_count"),
@@ -59,18 +63,19 @@ def list_zones(current_user=None):
         .group_by(Era.id)
     )
 
-    # Filter by membership if requested **and** a user is logged in
+    # Apply joined filter for authenticated users
     if joined_only and current_user:
-        base = base.filter(user_era_membership.c.user_id == current_user.id)
-    elif joined_only:
-        # guest asked for joined → return empty list (no auth)
-        return success_response([], "No joined eras for unauthenticated user")
+        base_query = base_query.filter(user_era_membership.c.user_id == current_user.id)
 
-    eras = base.all()
+    eras_data = base_query.all()
 
-    # Determine joined status per era (O(1) because we already have the join table)
-    user_era_ids = {e.id for e in current_user.joined_eras} if current_user else set()
+    # Get user's joined era IDs (only for authenticated users)
+    user_era_ids = set()
+    if current_user:
+        # Safe way to get joined eras
+        user_era_ids = {era.id for era in getattr(current_user, "joined_eras", [])}
 
+    # Build response data
     data = [
         {
             "id": era.id,
@@ -78,14 +83,64 @@ def list_zones(current_user=None):
             "year_range": era.year_range or "",
             "description": era.description or "",
             "image": era.image or "",
-            "member_count": member_count,
-            "post_count": post_count,
-            "joined": era.id in user_era_ids,
+            "member_count": member_count or 0,
+            "post_count": post_count or 0,
+            "joined": era.id
+            in user_era_ids,  # True for user's joined eras, False otherwise
         }
-        for era, post_count, member_count in eras
+        for era, post_count, member_count in eras_data
     ]
 
-    return success_response(data, "Eras fetched successfully")
+    message = "Eras fetched successfully"
+    if joined_only and current_user:
+        message = f"Showing {len(data)} joined eras"
+    elif not current_user:
+        message = "Eras fetched (sign in to join communities)"
+
+    return success_response(data, message)
+  
+    # joined_only = request.args.get("joined", "").lower() == "true"
+
+    # # Base query – always include era + aggregates
+    # base = (
+    #     db.session.query(
+    #         Era,
+    #         func.count(distinct(Post.id)).label("post_count"),
+    #         func.count(distinct(user_era_membership.c.user_id)).label("member_count"),
+    #     )
+    #     .outerjoin(Zone, Era.id == Zone.era_id)
+    #     .outerjoin(Post, Zone.id == Post.zone_id)
+    #     .outerjoin(user_era_membership, Era.id == user_era_membership.c.era_id)
+    #     .group_by(Era.id)
+    # )
+
+    # # Filter by membership if requested **and** a user is logged in
+    # if joined_only and current_user:
+    #     base = base.filter(user_era_membership.c.user_id == current_user.id)
+    # elif joined_only:
+    #     # guest asked for joined → return empty list (no auth)
+    #     return success_response([], "No joined eras for unauthenticated user")
+
+    # eras = base.all()
+
+    # # Determine joined status per era (O(1) because we already have the join table)
+    # user_era_ids = {e.id for e in current_user.joined_eras} if current_user else set()
+
+    # data = [
+    #     {
+    #         "id": era.id,
+    #         "name": era.name,
+    #         "year_range": era.year_range or "",
+    #         "description": era.description or "",
+    #         "image": era.image or "",
+    #         "member_count": member_count,
+    #         "post_count": post_count,
+    #         "joined": era.id in user_era_ids,
+    #     }
+    #     for era, post_count, member_count in eras
+    # ]
+
+    # return success_response(data, "Eras fetched successfully")
 
 
 # # ---------------------------
@@ -418,6 +473,188 @@ def time_ago(dt):
     return "just now"
 
 
+@community_bp.route("/posts/my-communities", methods=["GET"])
+@token_required
+def list_my_community_posts(current_user=None):
+    """
+    List posts ONLY from eras the current user has joined
+    ---
+    tags:
+      - Community
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        example: 1
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        example: 20
+        default: 20
+    responses:
+      200:
+        description: Posts from user's communities fetched successfully
+    """
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+
+    # Get the eras the user has joined
+    user_era_ids = [era.id for era in current_user.joined_eras]
+
+    if not user_era_ids:
+        return success_response(
+            {"posts": [], "pagination": {"page": page, "total": 0}},
+            "No posts found - user hasn't joined any communities"
+        )
+
+    query = (
+        db.session.query(
+            Post,
+            func.count(distinct(Like.id)).label("likes_count"),
+            func.count(distinct(Comment.id)).label("comments_count"),
+        )
+        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+        .outerjoin(Comment, Comment.post_id == Post.id)
+        .join(Zone, Post.zone_id == Zone.id)
+        .join(Era, Zone.era_id == Era.id)
+        .filter(Era.id.in_(user_era_ids))  # ✅ Only user's joined eras
+        .group_by(Post.id)
+    )
+
+    paginated = query.order_by(Post.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    user_liked = set()
+    if current_user:
+        liked = (
+            Like.query.filter_by(user_id=current_user.id, type="post")
+            .with_entities(Like.post_id)
+            .all()
+        )
+        user_liked = {l[0] for l in liked}
+
+    data = [
+        {
+            "id": p.id,
+            "title": p.title,
+            "content": p.content,
+            "media": (p.media.split("|") if p.media else []),
+            "created_at": p.created_at.isoformat(),
+            "time_ago": time_ago(p.created_at),
+            "pinned": p.pinned,
+            "hot_thread": p.hot_thread,
+            "likes_count": likes_count,
+            "comments_count": comments_count,
+            "user_liked": p.id in user_liked,
+            "author": {
+                "id": p.user.id,
+                "username": p.user.username,
+                "avatar": p.user.avatar or "",
+            },
+            "era": {
+                "id": p.zone.era.id,
+                "name": p.zone.era.name,
+                "year_range": p.zone.era.year_range or "",
+            },
+            "zone": {"id": p.zone.id, "name": p.zone.name},
+        }
+        for p, likes_count, comments_count in paginated.items
+    ]
+
+    return success_response(
+        {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+        "Posts from your communities fetched",
+    )
+
+
+@community_bp.route("/posts/all", methods=["GET"])
+@token_required
+def list_all_posts(current_user=None):
+    """
+    List ALL posts from ALL eras (discover/explore feed)
+    ---
+    tags:
+      - Community
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        example: 1
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        example: 20
+        default: 20
+    responses:
+      200:
+        description: All posts fetched successfully
+    """
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+
+    query = (
+        db.session.query(
+            Post,
+            func.count(distinct(Like.id)).label("likes_count"),
+            func.count(distinct(Comment.id)).label("comments_count"),
+        )
+        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+        .outerjoin(Comment, Comment.post_id == Post.id)
+        .join(Zone, Post.zone_id == Zone.id)
+        .join(Era, Zone.era_id == Era.id)
+        .group_by(Post.id)
+    )
+
+    paginated = query.order_by(Post.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    user_liked = set()
+    if current_user:
+        liked = (
+            Like.query.filter_by(user_id=current_user.id, type="post")
+            .with_entities(Like.post_id)
+            .all()
+        )
+        user_liked = {l[0] for l in liked}
+
+    data = [
+        {
+            "id": p.id,
+            "title": p.title,
+            "content": p.content,
+            "media": (p.media.split("|") if p.media else []),
+            "created_at": p.created_at.isoformat(),
+            "time_ago": time_ago(p.created_at),
+            "pinned": p.pinned,
+            "hot_thread": p.hot_thread,
+            "likes_count": likes_count,
+            "comments_count": comments_count,
+            "user_liked": p.id in user_liked,
+            "author": {
+                "id": p.user.id,
+                "username": p.user.username,
+                "avatar": p.user.avatar or "",
+            },
+            "era": {
+                "id": p.zone.era.id,
+                "name": p.zone.era.name,
+                "year_range": p.zone.era.year_range or "",
+            },
+            "zone": {"id": p.zone.id, "name": p.zone.name},
+        }
+        for p, likes_count, comments_count in paginated.items
+    ]
+
+    return success_response(
+        {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+        "All posts fetched",
+    )
+
+
 @community_bp.route("/posts", methods=["GET"])
 @token_required
 def list_posts(current_user=None):
@@ -503,6 +740,13 @@ def list_posts(current_user=None):
         .join(Era, Zone.era_id == Era.id)
         .group_by(Post.id)
     )
+    
+    # If no era_id specified, default to user's communities
+    if not era_id and current_user:
+        user_era_ids = [era.id for era in current_user.joined_eras]
+        if user_era_ids:
+            query = query.filter(Era.id.in_(user_era_ids))
+            
     if era_id:
         query = query.filter(Era.id == era_id)
 

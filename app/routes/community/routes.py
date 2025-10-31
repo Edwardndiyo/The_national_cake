@@ -44,66 +44,88 @@ def list_zones(current_user=None):
               post_count: {type: integer}
               joined: {type: boolean}
     """
+    
     try:
+        print("🔍 DEBUG: Starting list_zones endpoint")
         joined_only = request.args.get("joined", "").lower() == "true"
+        print(f"🔍 DEBUG: joined_only = {joined_only}, current_user = {current_user is not None}")
 
         # Handle joined filter for guest users
         if joined_only and not current_user:
+            print("🔍 DEBUG: Guest user requested joined eras - returning empty")
             return success_response([], "No joined eras for unauthenticated user")
 
-        # SIMPLE APPROACH: Get eras first, then counts separately
-        if joined_only and current_user:
-            # Get only joined eras
-            eras = current_user.joined_eras
-        else:
-            # Get all eras
-            eras = Era.query.all()
+        # STEP 1: Get eras safely
+        try:
+            if joined_only and current_user:
+                print("🔍 DEBUG: Getting user's joined eras")
+                eras = current_user.joined_eras
+                print(f"🔍 DEBUG: Found {len(eras)} joined eras")
+            else:
+                print("🔍 DEBUG: Getting all eras")
+                eras = Era.query.all()
+                print(f"🔍 DEBUG: Found {len(eras)} total eras")
+        except Exception as era_error:
+            print(f"❌ DEBUG: Error getting eras: {era_error}")
+            return error_response("Error fetching eras", 500)
 
-        # Build response with separate count queries (more reliable)
-        data = []
+        # STEP 2: Get user's joined era IDs safely
         user_era_ids = set()
-
         if current_user:
-            user_era_ids = {era.id for era in current_user.joined_eras}
+            try:
+                print("🔍 DEBUG: Getting user's joined era IDs")
+                user_era_ids = {era.id for era in current_user.joined_eras}
+                print(f"🔍 DEBUG: User has joined {len(user_era_ids)} eras: {user_era_ids}")
+            except Exception as user_error:
+                print(f"❌ DEBUG: Error getting user eras: {user_error}")
+                # Continue without user era IDs
 
+        # STEP 3: Build response data
+        data = []
         for era in eras:
-            # Get post count (posts → zones → era)
-            post_count = (
-                db.session.query(Post).join(Zone).filter(Zone.era_id == era.id).count()
-            )
-
-            # Get member count directly from join table
-            member_count = db.session.execute(
-                f"SELECT COUNT(*) FROM user_era_membership WHERE era_id = {era.id}"
-            ).scalar()
-
-            data.append(
-                {
+            try:
+                print(f"🔍 DEBUG: Processing era {era.id}: {era.name}")
+                
+                # Simple counts (skip complex queries for now)
+                post_count = 0
+                member_count = 0
+                
+                # Try to get counts if needed (comment out for now to test)
+                # post_count = db.session.query(Post).join(Zone).filter(Zone.era_id == era.id).count()
+                # member_count = db.session.query(user_era_membership).filter(user_era_membership.c.era_id == era.id).count()
+                
+                era_data = {
                     "id": era.id,
                     "name": era.name,
                     "year_range": era.year_range or "",
                     "description": era.description or "",
                     "image": era.image or "",
-                    "member_count": member_count or 0,
-                    "post_count": post_count or 0,
+                    "member_count": member_count,
+                    "post_count": post_count,
                     "joined": era.id in user_era_ids,
                 }
-            )
+                data.append(era_data)
+                print(f"🔍 DEBUG: Added era {era.id} to response")
+                
+            except Exception as era_process_error:
+                print(f"❌ DEBUG: Error processing era {era.id}: {era_process_error}")
+                # Skip this era but continue with others
 
+        # Build response message
         message = "Eras fetched successfully"
         if joined_only and current_user:
             message = f"Showing {len(data)} joined eras"
         elif not current_user:
             message = "Eras fetched (sign in to join communities)"
 
+        print(f"🔍 DEBUG: Returning {len(data)} eras")
         return success_response(data, message)
-
+        
     except Exception as e:
-        print(f"❌ ERROR in list_zones: {str(e)}")
+        print(f"❌ CRITICAL ERROR in list_zones: {str(e)}")
         import traceback
-
-        print(f"❌ TRACEBACK: {traceback.format_exc()}")
-        return error_response(f"Internal server error", 500)
+        print(f"❌ FULL TRACEBACK:\n{traceback.format_exc()}")
+        return error_response("Internal server error", 500)
 
     # joined_only = request.args.get("joined", "").lower() == "true"
 

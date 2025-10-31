@@ -44,61 +44,80 @@ def list_zones(current_user=None):
               post_count: {type: integer}
               joined: {type: boolean}
     """
-    joined_only = request.args.get("joined", "").lower() == "true"
+    try:
+        joined_only = request.args.get("joined", "").lower() == "true"
 
-    # Handle joined filter for guest users
-    if joined_only and not current_user:
-        return success_response([], "No joined eras for unauthenticated user")
+        print(f"🔍 Debug: current_user = {current_user}")
+        print(f"🔍 Debug: joined_only = {joined_only}")
 
-    # Base query for all eras with counts
-    base_query = (
-        db.session.query(
-            Era,
-            func.count(distinct(Post.id)).label("post_count"),
-            func.count(distinct(user_era_membership.c.user_id)).label("member_count"),
+        # Handle joined filter for guest users
+        if joined_only and not current_user:
+            return success_response([], "No joined eras for unauthenticated user")
+
+        # SIMPLIFIED QUERY FIRST - let's test if basic era query works
+        print("🔍 Testing basic Era query...")
+        basic_eras = Era.query.all()
+        print(f"🔍 Found {len(basic_eras)} eras")
+
+        # Base query for all eras with counts
+        base_query = (
+            db.session.query(
+                Era,
+                func.count(distinct(Post.id)).label("post_count"),
+                func.count(distinct(user_era_membership.c.user_id)).label(
+                    "member_count"
+                ),
+            )
+            .outerjoin(Zone, Era.id == Zone.era_id)
+            .outerjoin(Post, Zone.id == Post.zone_id)
+            .outerjoin(user_era_membership, Era.id == user_era_membership.c.era_id)
+            .group_by(Era.id)
         )
-        .outerjoin(Zone, Era.id == Zone.era_id)
-        .outerjoin(Post, Zone.id == Post.zone_id)
-        .outerjoin(user_era_membership, Era.id == user_era_membership.c.era_id)
-        .group_by(Era.id)
-    )
 
-    # Apply joined filter for authenticated users
-    if joined_only and current_user:
-        base_query = base_query.filter(user_era_membership.c.user_id == current_user.id)
+        print("🔍 Executing main query...")
+        eras_data = base_query.all()
+        print(f"🔍 Query executed, found {len(eras_data)} results")
 
-    eras_data = base_query.all()
+        # Get user's joined era IDs (only for authenticated users)
+        user_era_ids = set()
+        if current_user:
+            print(f"🔍 Getting joined eras for user {current_user.id}")
+            # Safe way to get joined eras
+            user_era_ids = {era.id for era in getattr(current_user, "joined_eras", [])}
+            print(f"🔍 User has joined {len(user_era_ids)} eras: {user_era_ids}")
 
-    # Get user's joined era IDs (only for authenticated users)
-    user_era_ids = set()
-    if current_user:
-        # Safe way to get joined eras
-        user_era_ids = {era.id for era in getattr(current_user, "joined_eras", [])}
+        # Build response data
+        data = [
+            {
+                "id": era.id,
+                "name": era.name,
+                "year_range": era.year_range or "",
+                "description": era.description or "",
+                "image": era.image or "",
+                "member_count": member_count or 0,
+                "post_count": post_count or 0,
+                "joined": era.id in user_era_ids,
+            }
+            for era, post_count, member_count in eras_data
+        ]
 
-    # Build response data
-    data = [
-        {
-            "id": era.id,
-            "name": era.name,
-            "year_range": era.year_range or "",
-            "description": era.description or "",
-            "image": era.image or "",
-            "member_count": member_count or 0,
-            "post_count": post_count or 0,
-            "joined": era.id
-            in user_era_ids,  # True for user's joined eras, False otherwise
-        }
-        for era, post_count, member_count in eras_data
-    ]
+        message = "Eras fetched successfully"
+        if joined_only and current_user:
+            message = f"Showing {len(data)} joined eras"
+        elif not current_user:
+            message = "Eras fetched (sign in to join communities)"
 
-    message = "Eras fetched successfully"
-    if joined_only and current_user:
-        message = f"Showing {len(data)} joined eras"
-    elif not current_user:
-        message = "Eras fetched (sign in to join communities)"
+        return success_response(data, message)
 
-    return success_response(data, message)
-  
+    except Exception as e:
+        print(f"❌ ERROR in list_zones: {str(e)}")
+        print(f"❌ ERROR type: {type(e)}")
+        import traceback
+
+        print(f"❌ TRACEBACK: {traceback.format_exc()}")
+        return error_response(f"Internal server error: {str(e)}", 500)
+      
+
     # joined_only = request.args.get("joined", "").lower() == "true"
 
     # # Base query – always include era + aggregates

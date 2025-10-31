@@ -97,7 +97,7 @@ class Era(db.Model):
     members = db.relationship(
         "User",
         secondary=user_era_membership,
-        backref="joined_eras",
+        back_populates="joined_eras",
     )
 
 class Zone(db.Model):

@@ -47,59 +47,48 @@ def list_zones(current_user=None):
     try:
         joined_only = request.args.get("joined", "").lower() == "true"
 
-        print(f"🔍 Debug: current_user = {current_user}")
-        print(f"🔍 Debug: joined_only = {joined_only}")
-
         # Handle joined filter for guest users
         if joined_only and not current_user:
             return success_response([], "No joined eras for unauthenticated user")
 
-        # SIMPLIFIED QUERY FIRST - let's test if basic era query works
-        print("🔍 Testing basic Era query...")
-        basic_eras = Era.query.all()
-        print(f"🔍 Found {len(basic_eras)} eras")
+        # SIMPLE APPROACH: Get eras first, then counts separately
+        if joined_only and current_user:
+            # Get only joined eras
+            eras = current_user.joined_eras
+        else:
+            # Get all eras
+            eras = Era.query.all()
 
-        # Base query for all eras with counts
-        base_query = (
-            db.session.query(
-                Era,
-                func.count(distinct(Post.id)).label("post_count"),
-                func.count(distinct(user_era_membership.c.user_id)).label(
-                    "member_count"
-                ),
-            )
-            .outerjoin(Zone, Era.id == Zone.era_id)
-            .outerjoin(Post, Zone.id == Post.zone_id)
-            .outerjoin(user_era_membership, Era.id == user_era_membership.c.era_id)
-            .group_by(Era.id)
-        )
-
-        print("🔍 Executing main query...")
-        eras_data = base_query.all()
-        print(f"🔍 Query executed, found {len(eras_data)} results")
-
-        # Get user's joined era IDs (only for authenticated users)
+        # Build response with separate count queries (more reliable)
+        data = []
         user_era_ids = set()
-        if current_user:
-            print(f"🔍 Getting joined eras for user {current_user.id}")
-            # Safe way to get joined eras
-            user_era_ids = {era.id for era in getattr(current_user, "joined_eras", [])}
-            print(f"🔍 User has joined {len(user_era_ids)} eras: {user_era_ids}")
 
-        # Build response data
-        data = [
-            {
-                "id": era.id,
-                "name": era.name,
-                "year_range": era.year_range or "",
-                "description": era.description or "",
-                "image": era.image or "",
-                "member_count": member_count or 0,
-                "post_count": post_count or 0,
-                "joined": era.id in user_era_ids,
-            }
-            for era, post_count, member_count in eras_data
-        ]
+        if current_user:
+            user_era_ids = {era.id for era in current_user.joined_eras}
+
+        for era in eras:
+            # Get post count (posts → zones → era)
+            post_count = (
+                db.session.query(Post).join(Zone).filter(Zone.era_id == era.id).count()
+            )
+
+            # Get member count directly from join table
+            member_count = db.session.execute(
+                f"SELECT COUNT(*) FROM user_era_membership WHERE era_id = {era.id}"
+            ).scalar()
+
+            data.append(
+                {
+                    "id": era.id,
+                    "name": era.name,
+                    "year_range": era.year_range or "",
+                    "description": era.description or "",
+                    "image": era.image or "",
+                    "member_count": member_count or 0,
+                    "post_count": post_count or 0,
+                    "joined": era.id in user_era_ids,
+                }
+            )
 
         message = "Eras fetched successfully"
         if joined_only and current_user:
@@ -111,12 +100,10 @@ def list_zones(current_user=None):
 
     except Exception as e:
         print(f"❌ ERROR in list_zones: {str(e)}")
-        print(f"❌ ERROR type: {type(e)}")
         import traceback
 
         print(f"❌ TRACEBACK: {traceback.format_exc()}")
-        return error_response(f"Internal server error: {str(e)}", 500)
-      
+        return error_response(f"Internal server error", 500)
 
     # joined_only = request.args.get("joined", "").lower() == "true"
 

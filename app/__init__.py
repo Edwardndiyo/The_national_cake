@@ -249,48 +249,48 @@ def create_app():
     #         print(f"❌ Database schema sync completely failed: {e}")
     #         db.session.rollback()
 
-    with app.app_context():
-        try:
-            from sqlalchemy import text
+    # with app.app_context():
+    #     try:
+    #         from sqlalchemy import text
 
-            # Check and add missing columns to eras table
-            result = db.session.execute(
-                text(
-                    """
-                SELECT column_name
-                FROM information_schema.columns
-                WHERE table_name='eras'
-            """
-                )
-            )
-            existing_columns = {row[0] for row in result}
+    #         # Check and add missing columns to eras table
+    #         result = db.session.execute(
+    #             text(
+    #                 """
+    #             SELECT column_name
+    #             FROM information_schema.columns
+    #             WHERE table_name='eras'
+    #         """
+    #             )
+    #         )
+    #         existing_columns = {row[0] for row in result}
 
-            missing_columns = []
-            if "year_range" not in existing_columns:
-                missing_columns.append("ADD COLUMN year_range VARCHAR(50)")
-            if "image" not in existing_columns:
-                missing_columns.append("ADD COLUMN image VARCHAR(255)")
+    #         missing_columns = []
+    #         if "year_range" not in existing_columns:
+    #             missing_columns.append("ADD COLUMN year_range VARCHAR(50)")
+    #         if "image" not in existing_columns:
+    #             missing_columns.append("ADD COLUMN image VARCHAR(255)")
 
-            if missing_columns:
-                print("🔄 Adding missing columns to eras table...")
-                alter_sql = f"ALTER TABLE eras {', '.join(missing_columns)}"
-                db.session.execute(text(alter_sql))
-                db.session.commit()
-                print("✅ Added missing columns to eras table!")
+    #         if missing_columns:
+    #             print("🔄 Adding missing columns to eras table...")
+    #             alter_sql = f"ALTER TABLE eras {', '.join(missing_columns)}"
+    #             db.session.execute(text(alter_sql))
+    #             db.session.commit()
+    #             print("✅ Added missing columns to eras table!")
 
-        except Exception as e:
-            print(f"❌ Could not auto-add columns: {e}")
-            db.session.rollback()
+    #     except Exception as e:
+    #         print(f"❌ Could not auto-add columns: {e}")
+    #         db.session.rollback()
 
-    with app.app_context():
-        try:
-            from flask_migrate import upgrade
+    # with app.app_context():
+    #     try:
+    #         from flask_migrate import upgrade
 
-            print("🔄 Applying migrations on startup...")
-            upgrade()
-            print("✅ Migrations applied successfully!")
-        except Exception as e:
-            print(f"❌ Migration failed: {e}")
+    #         print("🔄 Applying migrations on startup...")
+    #         upgrade()
+    #         print("✅ Migrations applied successfully!")
+    #     except Exception as e:
+    #         print(f"❌ Migration failed: {e}")
 
     # --- SIMPLE MIGRATION COMMAND ---
     @app.cli.command("db-migrate")

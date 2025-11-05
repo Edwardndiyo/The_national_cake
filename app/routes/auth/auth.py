@@ -18,6 +18,7 @@ import random
 import re
 from datetime import datetime, timedelta
 import logging
+from app.utils.security import can_resend_otp
 
 logger = logging.getLogger(__name__)
 
@@ -258,84 +259,6 @@ def signup():
             "details": str(e)
         }), 500
 
-    # data = request.get_json()
-    # firstname = data.get("firstname")
-    # lastname = data.get("lastname")
-    # email = data.get("email")
-    # phone = data.get("phone")
-    # nationality = data.get("nationality")
-    # referral = data.get("referral")
-    # password = data.get("password")
-    # username = data.get("username")
-
-    # # Check uniqueness
-    # if User.query.filter_by(email=email).first():
-    #     return jsonify({"error": "Email already registered"}), 400
-    # if User.query.filter_by(phone=phone).first():
-    #     return jsonify({"error": "Phone already registered"}), 400
-
-    # # Generate unique username if not provided
-    # if not username:
-    #     base_username = re.sub(r"\W+", "", (firstname + lastname).lower())
-    #     username = base_username
-    #     counter = 1
-    #     while User.query.filter_by(username=username).first():
-    #         username = f"{base_username}{counter}"
-    #         counter += 1
-    # else:
-    #     if User.query.filter_by(username=username).first():
-    #         return jsonify({"error": "Username already taken"}), 400
-
-    # # Create user (not verified yet)
-    # user = User(
-    #     firstname=firstname,
-    #     lastname=lastname,
-    #     fullname=f"{firstname} {lastname}",
-    #     username=username,
-    #     email=email,
-    #     phone=phone,
-    #     nationality=nationality,
-    #     referral=referral,
-    #     password_hash=hash_password(password),
-    #     provider="local",
-    #     is_verified=False,
-    # )
-    # db.session.add(user)
-    # db.session.commit()
-
-    # # Generate OTP (6-digit)
-    # otp_code = str(random.randint(100000, 999999))
-    # expiry = datetime.utcnow() + timedelta(minutes=10)
-
-    # # otp_entry = PasswordResetOTP(
-    # #     user_id=user.id,
-    # #     otp=otp_code,
-    # #     expires_at=expiry,
-    # #     purpose="email_verification",  # new purpose flag
-    # # )
-    # otp_entry = PasswordResetOTP(
-    #     user_id=user.id,
-    #     # email=user.email,   # <-- FIX
-    #     otp=otp_code,
-    #     expires_at=expiry,
-    #     purpose="email_verification",
-    # )
-
-    # db.session.add(otp_entry)
-    # db.session.commit()
-
-    # # Send OTP via email
-    # send_email(
-    #     "Verify your email",
-    #     user.email,
-    #     f"Hi {user.firstname},\n\nYour verification code is: {otp_code}\n\nIt will expire in 10 minutes.",
-    # )
-
-    # return jsonify({
-    #     "message": "Signup successful, please verify your email with the OTP code!",
-    #     "username": user.username,
-    # }), 201
-
 # ---------------------------
 # VERIFY OTP
 # ---------------------------
@@ -420,6 +343,92 @@ def verify_email(token):
     db.session.commit()
 
     return jsonify({"message": "Email verified successfully"}), 200
+
+
+@auth_bp.route("/resend-signup-otp", methods=["POST"])
+def resend_signup_otp():
+    """
+    Resend signup verification OTP (rate-limited: 1 per 5 minutes)
+    ---
+    tags:
+      - Auth
+    parameters:
+      - in: body
+        name: body
+        required: true
+        schema:
+          type: object
+          required: [email]
+          properties:
+            email: {type: string}
+    responses:
+      200:
+        description: OTP resent successfully
+      400:
+        description: User not found or already verified
+      429:
+        description: Too many resend attempts (wait 5 minutes)
+    """
+    data = request.get_json()
+    email = data.get("email")
+
+    if not email:
+        return error_response("Email is required", 400)
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return error_response("User not found", 400)
+
+    if user.is_verified:
+        return error_response("Email already verified", 400)
+
+    # Rate limit: 1 resend per 5 minutes
+    if not can_resend_otp(user.id, purpose="email_verification", cooldown_minutes=5):
+        return error_response("Too many resend attempts. Please wait 5 minutes.", 429)
+
+    # Delete any old OTPs for this user + purpose
+    PasswordResetOTP.query.filter_by(
+        user_id=user.id, purpose="email_verification"
+    ).delete()
+
+    # Generate new OTP
+    otp_code = str(random.randint(100000, 999999))
+    expiry = datetime.utcnow() + timedelta(minutes=10)
+
+    new_otp = PasswordResetOTP(
+        user=user,
+        otp=otp_code,
+        expires_at=expiry,
+        purpose="email_verification",
+        request_count=1,
+        is_verified=False,
+    )
+    db.session.add(new_otp)
+
+    # Send email
+    try:
+        send_email(
+            subject="Your New Verification Code",
+            to_email=user.email,
+            body=f"Hi {user.firstname},\n\n"
+            f"Your new verification code is: <strong>{otp_code}</strong>\n\n"
+            f"It expires in 10 minutes.\n\n"
+            f"If you didn't request this, ignore this email.",
+        )
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f"Resend OTP email failed: {e}")
+        return error_response("Failed to send OTP. Please try again.", 500)
+
+    db.session.commit()
+
+    # Optional: print for dev
+    print(f"OTP RESENT → {email}: {otp_code}")
+
+    return success_response(
+        message="Verification code resent successfully. Check your email.", status=200
+    )
+    
 
 
 @auth_bp.route("/login", methods=["POST"])

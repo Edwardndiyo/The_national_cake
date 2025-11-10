@@ -14,88 +14,190 @@ community_bp = Blueprint("community", __name__, url_prefix="/community")
 @community_bp.route("/zones", methods=["GET"])
 @token_required
 def list_zones(current_user=None):
-    try:
-        print("🔍 DEBUG: Starting list_zones endpoint")
+    """
+    List all Eras (with member/post counts and joined status)
+    """
 
-        # Test database connection first
-        try:
-            db.session.execute("SELECT 1")
-            print("🔍 DEBUG: Database connection OK")
-        except Exception as db_error:
-            print(f"❌ DEBUG: Database connection failed: {db_error}")
-            return error_response("Database connection failed", 500)
+    try:
+        print("🔍 DEBUG 1: Starting list_zones endpoint")
+        print(f"🔍 DEBUG 2: current_user type: {type(current_user)}")
+        print(f"🔍 DEBUG 3: current_user id: {getattr(current_user, 'id', 'NO_ID')}")
 
         joined_only = request.args.get("joined", "").lower() == "true"
-        print(f"🔍 DEBUG: joined_only = {joined_only}")
+        print(f"🔍 DEBUG 4: joined_only = {joined_only}")
 
         # Handle joined filter for guest users
         if joined_only and not current_user:
+            print("🔍 DEBUG 5: Guest user requested joined eras - returning empty")
             return success_response([], "No joined eras for unauthenticated user")
 
-        # Get eras with explicit session handling
+        # STEP 1: Test basic database connection first
         try:
-            if joined_only and current_user:
-                print("🔍 DEBUG: Getting user's joined eras")
-                # Use direct query instead of relationship to avoid mapper issues
-                eras = (
-                    db.session.query(Era)
-                    .join(user_era_membership, user_era_membership.c.era_id == Era.id)
-                    .filter(user_era_membership.c.user_id == current_user.id)
-                    .all()
-                )
-            else:
-                print("🔍 DEBUG: Getting all eras")
-                eras = db.session.query(Era).all()
+            print("🔍 DEBUG 6: Testing basic database connection")
+            from sqlalchemy import text
 
-            print(f"🔍 DEBUG: Found {len(eras)} eras")
+            test_result = db.session.execute(text("SELECT 1")).scalar()
+            print(f"🔍 DEBUG 7: Database test result: {test_result}")
+        except Exception as db_test_error:
+            print(f"❌ DEBUG 8: Database connection failed: {db_test_error}")
+            return error_response("Database connection failed", 500)
+
+        # STEP 2: Get eras with maximum safety
+        eras = []
+        try:
+            print("🔍 DEBUG 9: Attempting to query eras")
+            if joined_only and current_user:
+                print(
+                    f"🔍 DEBUG 10: Getting joined eras for user_id: {current_user.id}"
+                )
+                # Use the most basic approach possible
+                result = db.session.execute(
+                    text(
+                        "SELECT era_id FROM user_era_membership WHERE user_id = :user_id"
+                    ),
+                    {"user_id": current_user.id},
+                )
+                era_ids = [row[0] for row in result]
+                print(f"🔍 DEBUG 11: Found era IDs: {era_ids}")
+
+                if era_ids:
+                    # Build query manually to avoid any relationship issues
+                    era_id_placeholders = ",".join([str(id) for id in era_ids])
+                    era_query = text(
+                        f"SELECT * FROM eras WHERE id IN ({era_id_placeholders})"
+                    )
+                    era_result = db.session.execute(era_query)
+                    eras = [dict(row._mapping) for row in era_result]
+                    print(f"🔍 DEBUG 12: Found {len(eras)} joined eras as dicts")
+                else:
+                    eras = []
+                    print("🔍 DEBUG 13: No joined eras found")
+            else:
+                print("🔍 DEBUG 14: Getting all eras")
+                # Get all eras as dictionaries to avoid ORM issues
+                era_result = db.session.execute(text("SELECT * FROM eras"))
+                eras = [dict(row._mapping) for row in era_result]
+                print(f"🔍 DEBUG 15: Found {len(eras)} total eras as dicts")
 
         except Exception as era_error:
-            print(f"❌ DEBUG: Error getting eras: {str(era_error)}")
+            print(f"❌ DEBUG 16: Error in era query: {str(era_error)}")
             import traceback
 
-            print(f"❌ ERA ERROR TRACEBACK:\n{traceback.format_exc()}")
-            return error_response("Error fetching eras", 500)
+            print(f"❌ DEBUG 17: Era query traceback:\n{traceback.format_exc()}")
+            return error_response(f"Error fetching eras: {str(era_error)}", 500)
 
-        # Build response data
-        data = []
-        for era in eras:
+        # STEP 3: Get user's joined era IDs
+        user_era_ids = set()
+        if current_user:
             try:
-                era_data = {
-                    "id": era.id,
-                    "name": era.name,
-                    "year_range": era.year_range or "",
-                    "description": era.description or "",
-                    "image": era.image or "",
-                    "member_count": 0,  # Simplified for now
-                    "post_count": 0,  # Simplified for now
-                    "joined": (
-                        current_user
-                        and era.id in [e.id for e in current_user.joined_eras]
-                        if current_user
-                        else False
+                print(f"🔍 DEBUG 18: Getting joined era IDs for user {current_user.id}")
+                result = db.session.execute(
+                    text(
+                        "SELECT era_id FROM user_era_membership WHERE user_id = :user_id"
                     ),
+                    {"user_id": current_user.id},
+                )
+                user_era_ids = {row[0] for row in result}
+                print(f"🔍 DEBUG 19: User joined era IDs: {user_era_ids}")
+            except Exception as user_error:
+                print(f"⚠️ DEBUG 20: Error getting user era IDs: {user_error}")
+                # Continue without user era IDs
+
+        # STEP 4: Build response data with raw SQL counts
+        data = []
+        for era_dict in eras:
+            try:
+                era_id = era_dict["id"]
+                print(f"🔍 DEBUG 21: Processing era {era_id}: {era_dict['name']}")
+
+                # Get post count with raw SQL
+                try:
+                    post_count_result = db.session.execute(
+                        text(
+                            """
+                            SELECT COUNT(*) FROM posts 
+                            WHERE zone_id IN (
+                                SELECT id FROM zones WHERE era_id = :era_id
+                            )
+                        """
+                        ),
+                        {"era_id": era_id},
+                    )
+                    post_count = post_count_result.scalar() or 0
+                    print(f"🔍 DEBUG 22: Era {era_id} post count: {post_count}")
+                except Exception as post_error:
+                    print(
+                        f"⚠️ DEBUG 23: Error getting post count for era {era_id}: {post_error}"
+                    )
+                    post_count = 0
+
+                # Get member count with raw SQL
+                try:
+                    member_count_result = db.session.execute(
+                        text(
+                            "SELECT COUNT(*) FROM user_era_membership WHERE era_id = :era_id"
+                        ),
+                        {"era_id": era_id},
+                    )
+                    member_count = member_count_result.scalar() or 0
+                    print(f"🔍 DEBUG 24: Era {era_id} member count: {member_count}")
+                except Exception as member_error:
+                    print(
+                        f"⚠️ DEBUG 25: Error getting member count for era {era_id}: {member_error}"
+                    )
+                    member_count = 0
+
+                era_data = {
+                    "id": era_id,
+                    "name": era_dict["name"],
+                    "year_range": era_dict.get("year_range", ""),
+                    "description": era_dict.get("description", ""),
+                    "image": era_dict.get("image", ""),
+                    "member_count": member_count,
+                    "post_count": post_count,
+                    "joined": era_id in user_era_ids,
                 }
                 data.append(era_data)
+                print(f"🔍 DEBUG 26: Successfully added era {era_id} to response")
 
             except Exception as era_process_error:
-                print(f"❌ DEBUG: Error processing era {era.id}: {era_process_error}")
+                print(
+                    f"❌ DEBUG 27: Error processing era {era_dict.get('id', 'UNKNOWN')}: {str(era_process_error)}"
+                )
+                import traceback
+
+                print(f"❌ DEBUG 28: Era process traceback:\n{traceback.format_exc()}")
                 continue
 
+        # Build response message
         message = "Eras fetched successfully"
         if joined_only and current_user:
             message = f"Showing {len(data)} joined eras"
         elif not current_user:
             message = "Eras fetched (sign in to join communities)"
 
+        print(f"✅ DEBUG 29: Successfully returning {len(data)} eras")
         return success_response(data, message)
 
     except Exception as e:
-        print(f"❌ CRITICAL ERROR in list_zones: {str(e)}")
+        print(f"❌ CRITICAL DEBUG 30: Top-level error in list_zones: {str(e)}")
         import traceback
 
-        print(f"❌ FULL TRACEBACK:\n{traceback.format_exc()}")
-        return error_response("Internal server error", 500)
-      
+        print(f"❌ CRITICAL DEBUG 31: Full traceback:\n{traceback.format_exc()}")
+        return error_response(f"Internal server error: {str(e)}", 500)
+
+
+@community_bp.route("/zones-test", methods=["GET"])
+def zones_test():
+    """Completely minimal test endpoint"""
+    try:
+        print("🧪 TEST: Starting zones-test endpoint")
+        # Just return a simple response to test if the route works
+        test_data = [{"id": 1, "name": "Test Era", "message": "Basic endpoint works"}]
+        return success_response(test_data, "Test endpoint working")
+    except Exception as e:
+        print(f"🧪 TEST ERROR: {e}")
+        return error_response(f"Test failed: {str(e)}", 500)
 
 
 # -------------------------------------------------

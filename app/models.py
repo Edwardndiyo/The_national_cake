@@ -6,9 +6,10 @@ user_era_membership = db.Table(
     "user_era_membership",
     db.Column("user_id", db.Integer, db.ForeignKey("users.id"), primary_key=True),
     db.Column("era_id", db.Integer, db.ForeignKey("eras.id"), primary_key=True),
-    db.Column("joined_at", db.Column(db.DateTime, default=datetime.utcnow)),
+    db.Column(
+        "joined_at", db.DateTime, default=datetime.utcnow
+    ),  # REMOVED the nested db.Column
 )
-
 
 # ---- USERS ----
 class User(db.Model):

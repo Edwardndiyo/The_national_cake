@@ -11,6 +11,25 @@ from dateutil.relativedelta import relativedelta
 community_bp = Blueprint("community", __name__, url_prefix="/community")
 
 
+def time_ago(dt):
+    """Convert datetime to relative time string"""
+    now = datetime.utcnow()
+    diff = now - dt
+
+    if diff.days > 365:
+        return f"{diff.days // 365} years ago"
+    elif diff.days > 30:
+        return f"{diff.days // 30} months ago"
+    elif diff.days > 0:
+        return f"{diff.days} days ago"
+    elif diff.seconds > 3600:
+        return f"{diff.seconds // 3600} hours ago"
+    elif diff.seconds > 60:
+        return f"{diff.seconds // 60} minutes ago"
+    else:
+        return "just now"
+
+
 @community_bp.route("/zones", methods=["GET"])
 @token_required
 def list_zones(current_user=None):
@@ -645,17 +664,22 @@ def list_all_posts(current_user=None):
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
 
+    # FIX: Add explicit joins for User and Era
     query = (
         db.session.query(
             Post,
+            User,  # Add User to the query
+            Zone,
+            Era,  # Add Era to the query
             func.count(distinct(Like.id)).label("likes_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
         )
         .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
         .outerjoin(Comment, Comment.post_id == Post.id)
+        .join(User, Post.user_id == User.id)  # Explicit join for User
         .join(Zone, Post.zone_id == Zone.id)
-        .join(Era, Zone.era_id == Era.id)
-        .group_by(Post.id)
+        .join(Era, Zone.era_id == Era.id)  # Explicit join for Era
+        .group_by(Post.id, User.id, Zone.id, Era.id)  # Group by all selected tables
     )
 
     paginated = query.order_by(Post.created_at.desc()).paginate(
@@ -671,38 +695,100 @@ def list_all_posts(current_user=None):
         )
         user_liked = {l[0] for l in liked}
 
+    # FIX: Now we have post, user, zone, and era objects from the query
     data = [
         {
-            "id": p.id,
-            "title": p.title,
-            "content": p.content,
-            "media": (p.media.split("|") if p.media else []),
-            "created_at": p.created_at.isoformat(),
-            "time_ago": time_ago(p.created_at),
-            "pinned": p.pinned,
-            "hot_thread": p.hot_thread,
+            "id": post.id,
+            "title": post.title,
+            "content": post.content,
+            "media": (post.media.split("|") if post.media else []),
+            "created_at": post.created_at.isoformat(),
+            "time_ago": time_ago(post.created_at),
+            "pinned": post.pinned,
+            "hot_thread": post.hot_thread,
             "likes_count": likes_count,
             "comments_count": comments_count,
-            "user_liked": p.id in user_liked,
+            "user_liked": post.id in user_liked,
             "author": {
-                "id": p.user.id,
-                "username": p.user.username,
-                "avatar": p.user.avatar or "",
+                "id": user.id,  # Use user from query
+                "username": user.username,  # Use user from query
+                "avatar": user.avatar or "",
             },
             "era": {
-                "id": p.zone.era.id,
-                "name": p.zone.era.name,
-                "year_range": p.zone.era.year_range or "",
+                "id": era.id,  # Use era from query
+                "name": era.name,  # Use era from query
+                "year_range": era.year_range or "",  # Use era from query
             },
-            "zone": {"id": p.zone.id, "name": p.zone.name},
+            "zone": {"id": zone.id, "name": zone.name},  # Use zone from query
         }
-        for p, likes_count, comments_count in paginated.items
+        for post, user, zone, era, likes_count, comments_count in paginated.items
     ]
 
     return success_response(
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "All posts fetched",
     )
+    # page = request.args.get("page", 1, type=int)
+    # per_page = request.args.get("per_page", 20, type=int)
+
+    # query = (
+    #     db.session.query(
+    #         Post,
+    #         func.count(distinct(Like.id)).label("likes_count"),
+    #         func.count(distinct(Comment.id)).label("comments_count"),
+    #     )
+    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+    #     .outerjoin(Comment, Comment.post_id == Post.id)
+    #     .join(Zone, Post.zone_id == Zone.id)
+    #     .join(Era, Zone.era_id == Era.id)
+    #     .group_by(Post.id)
+    # )
+
+    # paginated = query.order_by(Post.created_at.desc()).paginate(
+    #     page=page, per_page=per_page, error_out=False
+    # )
+
+    # user_liked = set()
+    # if current_user:
+    #     liked = (
+    #         Like.query.filter_by(user_id=current_user.id, type="post")
+    #         .with_entities(Like.post_id)
+    #         .all()
+    #     )
+    #     user_liked = {l[0] for l in liked}
+
+    # data = [
+    #     {
+    #         "id": p.id,
+    #         "title": p.title,
+    #         "content": p.content,
+    #         "media": (p.media.split("|") if p.media else []),
+    #         "created_at": p.created_at.isoformat(),
+    #         "time_ago": time_ago(p.created_at),
+    #         "pinned": p.pinned,
+    #         "hot_thread": p.hot_thread,
+    #         "likes_count": likes_count,
+    #         "comments_count": comments_count,
+    #         "user_liked": p.id in user_liked,
+    #         "author": {
+    #             "id": p.user.id,
+    #             "username": p.user.username,
+    #             "avatar": p.user.avatar or "",
+    #         },
+    #         "era": {
+    #             "id": p.zone.era.id,
+    #             "name": p.zone.era.name,
+    #             "year_range": p.zone.era.year_range or "",
+    #         },
+    #         "zone": {"id": p.zone.id, "name": p.zone.name},
+    #     }
+    #     for p, likes_count, comments_count in paginated.items
+    # ]
+
+    # return success_response(
+    #     {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+    #     "All posts fetched",
+    # )
 
 
 @community_bp.route("/posts", methods=["GET"])

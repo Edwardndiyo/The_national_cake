@@ -51,6 +51,7 @@ class User(db.Model):
     badges = db.relationship("UserBadge", backref="user", cascade="all, delete-orphan")
     events = db.relationship("Event", backref="creator", cascade="all, delete-orphan")
     rsvps = db.relationship("RSVP", backref="user", cascade="all, delete-orphan")
+    posts = db.relationship("Post", back_populates="user", cascade="all, delete-orphan")
 
 
 class PasswordResetOTP(db.Model):
@@ -82,7 +83,7 @@ class Era(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     # relationships
-    zones = db.relationship("Zone", backref="era", cascade="all, delete-orphan")
+    zones = db.relationship("Zone", back_populates="era", cascade="all, delete-orphan")
     members = db.relationship(
         "User",
         secondary=user_era_membership,
@@ -99,6 +100,11 @@ class Zone(db.Model):
     era_id = db.Column(db.Integer, db.ForeignKey("eras.id"), nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
+    # FIX: Use back_populates instead of backref
+    era = db.relationship("Era", back_populates="zones")
+    posts = db.relationship("Post", back_populates="zone", cascade="all, delete-orphan")
+    # era = db.relationship("Era", backref="zones", lazy=True)
+
 
 class Post(db.Model):
     __tablename__ = "posts"
@@ -112,6 +118,13 @@ class Post(db.Model):
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     zone_id = db.Column(db.Integer, db.ForeignKey("zones.id"), nullable=False)
+
+    # ADD THIS RELATIONSHIP:
+    # FIX: Use back_populates instead of backref
+    user = db.relationship("User", back_populates="posts")
+    zone = db.relationship("Zone", back_populates="posts")
+    # user = db.relationship("User", backref="user_posts", lazy=True)
+    # zone = db.relationship("Zone", backref="posts", lazy=True)
 
 
 class Comment(db.Model):

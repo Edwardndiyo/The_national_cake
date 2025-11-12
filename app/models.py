@@ -137,15 +137,42 @@ class Comment(db.Model):
     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
 
 
+# class Like(db.Model):
+#     __tablename__ = "likes"
+#     id = db.Column(db.Integer, primary_key=True)
+#     type = db.Column(db.String(20), default="post")
+#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+#     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=True)
+#     comment_id = db.Column(db.Integer, db.ForeignKey("comments.id"), nullable=True)
+
+
 class Like(db.Model):
     __tablename__ = "likes"
     id = db.Column(db.Integer, primary_key=True)
-    type = db.Column(db.String(20), default="post")
+    type = db.Column(db.String(20), default="post")  # "post" or "comment"
+    reaction_type = db.Column(
+        db.String(20), default="like"
+    )  # "like" (agree) or "dislike" (disagree)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=True)
     comment_id = db.Column(db.Integer, db.ForeignKey("comments.id"), nullable=True)
+
+    # Add unique constraint to prevent duplicate reactions
+    __table_args__ = (
+        db.UniqueConstraint(
+            "user_id", "post_id", "reaction_type", name="unique_user_post_reaction"
+        ),
+        db.UniqueConstraint(
+            "user_id",
+            "comment_id",
+            "reaction_type",
+            name="unique_user_comment_reaction",
+        ),
+    )
 
 
 # ---- FEEDBACK ----
@@ -345,6 +372,23 @@ class PollVote(db.Model):
 
     def __repr__(self):
         return f"<PollVote user_id={self.user_id} poll_id={self.poll_id} option_id={self.option_id}>"
+
+
+# Add to your models.py
+class Bookmark(db.Model):
+    __tablename__ = "bookmarks"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        db.UniqueConstraint("user_id", "post_id", name="unique_user_post_bookmark"),
+    )
+
+    # Relationships
+    user = db.relationship("User", backref="bookmarks")
+    post = db.relationship("Post", backref="bookmarked_by")
 
 
 # from app import db

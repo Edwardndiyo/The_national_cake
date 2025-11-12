@@ -1,12 +1,14 @@
 # app/routes/community/routes.py
 from flask import Blueprint, request
 from app import db, socketio
-from app.models import Zone, Post, Comment, Like, Event, RSVP, User, Era, user_era_membership
+from app.models import Zone, Post, Comment, Like, Event, RSVP, User, Era, user_era_membership, Badge,Bookmark
 from app.utils.decorators import token_required, roles_required
 from app.utils.responses import success_response, error_response
 from sqlalchemy import func, distinct
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
+import sqlalchemy as sa
+from sqlalchemy import func, distinct
 
 community_bp = Blueprint("community", __name__, url_prefix="/community")
 
@@ -510,6 +512,8 @@ def create_post(current_user):
             "created_at": post.created_at.isoformat(),
             "author": {
                 "id": current_user.id,
+                "fullname": current_user.fullname,
+                
                 "username": current_user.username,
                 "avatar": current_user.avatar or "",
             },
@@ -594,50 +598,306 @@ def list_my_community_posts(current_user=None):
     paginated = query.order_by(Post.created_at.desc()).paginate(
         page=page, per_page=per_page, error_out=False
     )
+    # page = request.args.get("page", 1, type=int)
+    # per_page = request.args.get("per_page", 20, type=int)
 
-    user_liked = set()
+    # # Get the eras the user has joined
+    # user_era_ids = [era.id for era in current_user.joined_eras]
+
+    # if not user_era_ids:
+    #     return success_response(
+    #         {"posts": [], "pagination": {"page": page, "total": 0}},
+    #         "No posts found - user hasn't joined any communities",
+    #     )
+
+    # # Enhanced query with agree/disagree counts
+    # query = (
+    #     db.session.query(
+    #         Post,
+    #         User,
+    #         Zone,
+    #         Era,
+    #         # Like counts
+    #         func.count(distinct(Like.id)).label("likes_count"),
+    #         # Agree counts
+    #         func.count(
+    #             distinct(
+    #                 sa.case([(Like.reaction_type == "agree", Like.id)], else_=None)
+    #             )
+    #         ).label("agree_count"),
+    #         # Disagree counts
+    #         func.count(
+    #             distinct(
+    #                 sa.case([(Like.reaction_type == "disagree", Like.id)], else_=None)
+    #             )
+    #         ).label("disagree_count"),
+    #         # Comment counts
+    #         func.count(distinct(Comment.id)).label("comments_count"),
+    #     )
+    #     .join(User, Post.user_id == User.id)
+    #     .join(Zone, Post.zone_id == Zone.id)
+    #     .join(Era, Zone.era_id == Era.id)
+    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+    #     .outerjoin(Comment, Comment.post_id == Post.id)
+    #     .filter(Era.id.in_(user_era_ids))
+    #     .group_by(Post.id, User.id, Zone.id, Era.id)
+    # )
+
+    # paginated = query.order_by(Post.created_at.desc()).paginate(
+    #     page=page, per_page=per_page, error_out=False
+    # )
+
+    # Get user's reactions for all posts in this page
+    user_reactions = {}
     if current_user:
-        liked = (
-            Like.query.filter_by(user_id=current_user.id, type="post")
-            .with_entities(Like.post_id)
-            .all()
-        )
-        user_liked = {l[0] for l in liked}
+        post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+        if post_ids:
+            reactions = Like.query.filter(
+                Like.user_id == current_user.id,
+                Like.post_id.in_(post_ids),
+                Like.type == "post",
+            ).all()
+            user_reactions = {r.post_id: r.reaction_type for r in reactions}
 
-    data = [
-        {
-            "id": p.id,
-            "title": p.title,
-            "content": p.content,
-            "media": (p.media.split("|") if p.media else []),
-            "created_at": p.created_at.isoformat(),
-            "time_ago": time_ago(p.created_at),
-            "pinned": p.pinned,
-            "hot_thread": p.hot_thread,
-            "likes_count": likes_count,
-            "comments_count": comments_count,
-            "user_liked": p.id in user_liked,
-            "author": {
-                "id": p.user.id,
-                "username": p.user.username,
-                "avatar": p.user.avatar or "",
-            },
-            "era": {
-                "id": p.zone.era.id,
-                "name": p.zone.era.name,
-                "year_range": p.zone.era.year_range or "",
-            },
-            "zone": {"id": p.zone.id, "name": p.zone.name},
-        }
-        for p, likes_count, comments_count in paginated.items
-    ]
+    data = []
+    for (
+        post,
+        user,
+        zone,
+        era,
+        likes_count,
+        agree_count,
+        disagree_count,
+        comments_count,
+    ) in paginated.items:
+        user_reaction = user_reactions.get(post.id)
+
+        data.append(
+            {
+                "id": post.id,
+                "title": post.title,
+                "content": post.content,
+                "media": (post.media.split("|") if post.media else []),
+                "created_at": post.created_at.isoformat(),
+                "time_ago": time_ago(post.created_at),
+                "pinned": post.pinned,
+                "hot_thread": post.hot_thread,
+                "likes_count": likes_count or 0,
+                "agree_count": agree_count or 0,
+                "disagree_count": disagree_count or 0,
+                "user_agreed": user_reaction == "agree",
+                "user_disagreed": user_reaction == "disagree",
+                "comments_count": comments_count or 0,
+                "user_liked": False,  # Keep for backward compatibility
+                "author": {
+                    "id": user.id,
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+                "era": {
+                    "id": era.id,
+                    "name": era.name,
+                    "year_range": era.year_range or "",
+                },
+                "zone": {"id": zone.id, "name": zone.name},
+            }
+        )
 
     return success_response(
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "Posts from your communities fetched",
     )
+    # page = request.args.get("page", 1, type=int)
+    # per_page = request.args.get("per_page", 20, type=int)
+
+    # # Get the eras the user has joined
+    # user_era_ids = [era.id for era in current_user.joined_eras]
+
+    # if not user_era_ids:
+    #     return success_response(
+    #         {"posts": [], "pagination": {"page": page, "total": 0}},
+    #         "No posts found - user hasn't joined any communities"
+    #     )
+
+    # query = (
+    #     db.session.query(
+    #         Post,
+    #         func.count(distinct(Like.id)).label("likes_count"),
+    #         func.count(distinct(Comment.id)).label("comments_count"),
+    #     )
+    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+    #     .outerjoin(Comment, Comment.post_id == Post.id)
+    #     .join(Zone, Post.zone_id == Zone.id)
+    #     .join(Era, Zone.era_id == Era.id)
+    #     .filter(Era.id.in_(user_era_ids))  # ✅ Only user's joined eras
+    #     .group_by(Post.id)
+    # )
+
+    # paginated = query.order_by(Post.created_at.desc()).paginate(
+    #     page=page, per_page=per_page, error_out=False
+    # )
+
+    # user_liked = set()
+    # if current_user:
+    #     liked = (
+    #         Like.query.filter_by(user_id=current_user.id, type="post")
+    #         .with_entities(Like.post_id)
+    #         .all()
+    #     )
+    #     user_liked = {l[0] for l in liked}
+
+    # data = [
+    #     {
+    #         "id": p.id,
+    #         "title": p.title,
+    #         "content": p.content,
+    #         "media": (p.media.split("|") if p.media else []),
+    #         "created_at": p.created_at.isoformat(),
+    #         "time_ago": time_ago(p.created_at),
+    #         "pinned": p.pinned,
+    #         "hot_thread": p.hot_thread,
+    #         "likes_count": likes_count,
+    #         "agree_count": agree_count,
+    #         "disagree_count": disagree_count,
+    #         "user_agreed": user_agreed,  # boolean
+    #         "user_disagreed": user_disagreed,  # boolean
+    #         "comments_count": comments_count,
+    #         "user_liked": p.id in user_liked,
+    #         "author": {
+    #             "id": p.user.id,
+    #             "fullname": p.user.fullname,
+    #             "username": p.user.username,
+    #             "avatar": p.user.avatar or "",
+    #         },
+    #         "era": {
+    #             "id": p.zone.era.id,
+    #             "name": p.zone.era.name,
+    #             "year_range": p.zone.era.year_range or "",
+    #         },
+    #         "zone": {"id": p.zone.id, "name": p.zone.name},
+    #     }
+    #     for p, likes_count, comments_count in paginated.items
+    # ]
+
+    # return success_response(
+    #     {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+    #     "Posts from your communities fetched",
+    # )
 
 
+# ---------------------------
+# BOOKMARKS
+# ---------------------------
+@community_bp.route("/posts/<int:post_id>/bookmark", methods=["POST"])
+@token_required
+def toggle_bookmark(current_user, post_id):
+    """
+    Bookmark or unbookmark a post
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    existing_bookmark = Bookmark.query.filter_by(
+        user_id=current_user.id, post_id=post_id
+    ).first()
+
+    if existing_bookmark:
+        db.session.delete(existing_bookmark)
+        db.session.commit()
+        return success_response(message="Bookmark removed")
+    else:
+        bookmark = Bookmark(user_id=current_user.id, post_id=post_id)
+        db.session.add(bookmark)
+        db.session.commit()
+        return success_response(message="Post bookmarked", status=201)
+
+
+@community_bp.route("/bookmarks", methods=["GET"])
+@token_required
+def get_bookmarks(current_user):
+    """
+    Get current user's bookmarked posts
+    """
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+
+    query = (
+        db.session.query(
+            Post,
+            User,
+            Zone,
+            Era,
+            func.count(distinct(Like.id)).label("likes_count"),
+            func.count(distinct(sa.case([(Like.reaction_type == 'agree', Like.id)], else_=None))).label("agree_count"),
+            func.count(distinct(sa.case([(Like.reaction_type == 'disagree', Like.id)], else_=None))).label("disagree_count"),
+            func.count(distinct(Comment.id)).label("comments_count"),
+        )
+        .join(Bookmark, Bookmark.post_id == Post.id)
+        .join(User, Post.user_id == User.id)
+        .join(Zone, Post.zone_id == Zone.id)
+        .join(Era, Zone.era_id == Era.id)
+        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+        .outerjoin(Comment, Comment.post_id == Post.id)
+        .filter(Bookmark.user_id == current_user.id)
+        .group_by(Post.id, User.id, Zone.id, Era.id)
+    )
+
+    paginated = query.order_by(Bookmark.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    # Get user reactions for bookmarked posts
+    user_reactions = {}
+    post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+    if post_ids:
+        reactions = Like.query.filter(
+            Like.user_id == current_user.id,
+            Like.post_id.in_(post_ids),
+            Like.type == "post"
+        ).all()
+        user_reactions = {r.post_id: r.reaction_type for r in reactions}
+
+    data = []
+    for post, user, zone, era, likes_count, agree_count, disagree_count, comments_count in paginated.items:
+        user_reaction = user_reactions.get(post.id)
+        
+        data.append({
+            "id": post.id,
+            "title": post.title,
+            "content": post.content,
+            "media": (post.media.split("|") if post.media else []),
+            "created_at": post.created_at.isoformat(),
+            "time_ago": time_ago(post.created_at),
+            "pinned": post.pinned,
+            "hot_thread": post.hot_thread,
+            "likes_count": likes_count or 0,
+            "agree_count": agree_count or 0,
+            "disagree_count": disagree_count or 0,
+            "user_agreed": user_reaction == 'agree',
+            "user_disagreed": user_reaction == 'disagree',
+            "comments_count": comments_count or 0,
+            "bookmarked": True,  # Always true for bookmarks endpoint
+            "author": {
+                "id": user.id,
+                "fullname": user.fullname,
+                "username": user.username,
+                "avatar": user.avatar or "",
+            },
+            "era": {
+                "id": era.id,
+                "name": era.name,
+                "year_range": era.year_range or "",
+            },
+            "zone": {"id": zone.id, "name": zone.name},
+        })
+
+    return success_response(
+        {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+        "Bookmarked posts fetched",
+    )
+    
 @community_bp.route("/posts/all", methods=["GET"])
 @token_required
 def list_all_posts(current_user=None):
@@ -686,43 +946,104 @@ def list_all_posts(current_user=None):
         page=page, per_page=per_page, error_out=False
     )
 
-    user_liked = set()
+    user_reactions = {}
     if current_user:
-        liked = (
-            Like.query.filter_by(user_id=current_user.id, type="post")
-            .with_entities(Like.post_id)
-            .all()
-        )
-        user_liked = {l[0] for l in liked}
+        post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+        if post_ids:
+            reactions = Like.query.filter(
+                Like.user_id == current_user.id,
+                Like.post_id.in_(post_ids),
+                Like.type == "post",
+            ).all()
+            user_reactions = {r.post_id: r.reaction_type for r in reactions}
 
-    # FIX: Now we have post, user, zone, and era objects from the query
-    data = [
-        {
-            "id": post.id,
-            "title": post.title,
-            "content": post.content,
-            "media": (post.media.split("|") if post.media else []),
-            "created_at": post.created_at.isoformat(),
-            "time_ago": time_ago(post.created_at),
-            "pinned": post.pinned,
-            "hot_thread": post.hot_thread,
-            "likes_count": likes_count,
-            "comments_count": comments_count,
-            "user_liked": post.id in user_liked,
-            "author": {
-                "id": user.id,  # Use user from query
-                "username": user.username,  # Use user from query
-                "avatar": user.avatar or "",
-            },
-            "era": {
-                "id": era.id,  # Use era from query
-                "name": era.name,  # Use era from query
-                "year_range": era.year_range or "",  # Use era from query
-            },
-            "zone": {"id": zone.id, "name": zone.name},  # Use zone from query
-        }
-        for post, user, zone, era, likes_count, comments_count in paginated.items
-    ]
+    data = []
+    for (
+        post,
+        user,
+        zone,
+        era,
+        likes_count,
+        agree_count,
+        disagree_count,
+        comments_count,
+    ) in paginated.items:
+        user_reaction = user_reactions.get(post.id)
+
+        data.append(
+            {
+                "id": post.id,
+                "title": post.title,
+                "content": post.content,
+                "media": (post.media.split("|") if post.media else []),
+                "created_at": post.created_at.isoformat(),
+                "time_ago": time_ago(post.created_at),
+                "pinned": post.pinned,
+                "hot_thread": post.hot_thread,
+                "likes_count": likes_count or 0,
+                "agree_count": agree_count or 0,
+                "disagree_count": disagree_count or 0,
+                "user_agreed": user_reaction == "agree",
+                "user_disagreed": user_reaction == "disagree",
+                "comments_count": comments_count or 0,
+                "user_liked": False,  # Keep for backward compatibility
+                "author": {
+                    "id": user.id,
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+                "era": {
+                    "id": era.id,
+                    "name": era.name,
+                    "year_range": era.year_range or "",
+                },
+                "zone": {"id": zone.id, "name": zone.name},
+            }
+        )
+
+    # user_liked = set()
+    # if current_user:
+    #     liked = (
+    #         Like.query.filter_by(user_id=current_user.id, type="post")
+    #         .with_entities(Like.post_id)
+    #         .all()
+    #     )
+    #     user_liked = {l[0] for l in liked}
+
+    # # FIX: Now we have post, user, zone, and era objects from the query
+    # data = [
+    #     {
+    #         "id": post.id,
+    #         "title": post.title,
+    #         "content": post.content,
+    #         "media": (post.media.split("|") if post.media else []),
+    #         "created_at": post.created_at.isoformat(),
+    #         "time_ago": time_ago(post.created_at),
+    #         "pinned": post.pinned,
+    #         "hot_thread": post.hot_thread,
+    #         "likes_count": likes_count,
+    #         "agree_count": agree_count,
+    #         "disagree_count": disagree_count,
+    #         "user_agreed": user_agreed,  # boolean
+    #         "user_disagreed": user_disagreed,  # boolean
+    #         "comments_count": comments_count,
+    #         "user_liked": post.id in user_liked,
+    #         "author": {
+    #             "id": user.id,  # Use user from query
+    #             "fullname": user.fullname,  # Use user from query
+    #             "username": user.username,  # Use user from query
+    #             "avatar": user.avatar or "",
+    #         },
+    #         "era": {
+    #             "id": era.id,  # Use era from query
+    #             "name": era.name,  # Use era from query
+    #             "year_range": era.year_range or "",  # Use era from query
+    #         },
+    #         "zone": {"id": zone.id, "name": zone.name},  # Use zone from query
+    #     }
+    #     for post, user, zone, era, likes_count, comments_count in paginated.items
+    # ]
 
     return success_response(
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
@@ -876,13 +1197,13 @@ def list_posts(current_user=None):
         .join(Era, Zone.era_id == Era.id)
         .group_by(Post.id)
     )
-    
+
     # If no era_id specified, default to user's communities
     if not era_id and current_user:
         user_era_ids = [era.id for era in current_user.joined_eras]
         if user_era_ids:
             query = query.filter(Era.id.in_(user_era_ids))
-            
+
     if era_id:
         query = query.filter(Era.id == era_id)
 
@@ -890,42 +1211,103 @@ def list_posts(current_user=None):
         page=page, per_page=per_page, error_out=False
     )
 
-    user_liked = set()
+    user_reactions = {}
     if current_user:
-        liked = (
-            Like.query.filter_by(user_id=current_user.id, type="post")
-            .with_entities(Like.post_id)
-            .all()
-        )
-        user_liked = {l[0] for l in liked}
+        post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+        if post_ids:
+            reactions = Like.query.filter(
+                Like.user_id == current_user.id,
+                Like.post_id.in_(post_ids),
+                Like.type == "post",
+            ).all()
+            user_reactions = {r.post_id: r.reaction_type for r in reactions}
 
-    data = [
-        {
-            "id": p.id,
-            "title": p.title,
-            "content": p.content,
-            "media": (p.media.split("|") if p.media else []),
-            "created_at": p.created_at.isoformat(),
-            "time_ago": time_ago(p.created_at),
-            "pinned": p.pinned,
-            "hot_thread": p.hot_thread,
-            "likes_count": likes_count,
-            "comments_count": comments_count,
-            "user_liked": p.id in user_liked,
-            "author": {
-                "id": p.user.id,
-                "username": p.user.username,
-                "avatar": p.user.avatar or "",
-            },
-            "era": {
-                "id": p.zone.era.id,
-                "name": p.zone.era.name,
-                "year_range": p.zone.era.year_range or "",
-            },
-            "zone": {"id": p.zone.id, "name": p.zone.name},
-        }
-        for p, likes_count, comments_count in paginated.items
-    ]
+    data = []
+    for (
+        post,
+        user,
+        zone,
+        era,
+        likes_count,
+        agree_count,
+        disagree_count,
+        comments_count,
+    ) in paginated.items:
+        user_reaction = user_reactions.get(post.id)
+
+        data.append(
+            {
+                "id": post.id,
+                "title": post.title,
+                "content": post.content,
+                "media": (post.media.split("|") if post.media else []),
+                "created_at": post.created_at.isoformat(),
+                "time_ago": time_ago(post.created_at),
+                "pinned": post.pinned,
+                "hot_thread": post.hot_thread,
+                "likes_count": likes_count or 0,
+                "agree_count": agree_count or 0,
+                "disagree_count": disagree_count or 0,
+                "user_agreed": user_reaction == "agree",
+                "user_disagreed": user_reaction == "disagree",
+                "comments_count": comments_count or 0,
+                "user_liked": False,  # Keep for backward compatibility
+                "author": {
+                    "id": user.id,
+                    "fullname": user.fullname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+                "era": {
+                    "id": era.id,
+                    "name": era.name,
+                    "year_range": era.year_range or "",
+                },
+                "zone": {"id": zone.id, "name": zone.name},
+            }
+        )
+
+    # user_liked = set()
+    # if current_user:
+    #     liked = (
+    #         Like.query.filter_by(user_id=current_user.id, type="post")
+    #         .with_entities(Like.post_id)
+    #         .all()
+    #     )
+    #     user_liked = {l[0] for l in liked}
+
+    # data = [
+    #     {
+    #         "id": p.id,
+    #         "title": p.title,
+    #         "content": p.content,
+    #         "media": (p.media.split("|") if p.media else []),
+    #         "created_at": p.created_at.isoformat(),
+    #         "time_ago": time_ago(p.created_at),
+    #         "pinned": p.pinned,
+    #         "hot_thread": p.hot_thread,
+    #         "likes_count": likes_count,
+    #         "agree_count": agree_count,
+    #         "disagree_count": disagree_count,
+    #         "user_agreed": user_agreed,  # boolean
+    #         "user_disagreed": user_disagreed,  # boolean
+    #         "comments_count": comments_count,
+    #         "user_liked": p.id in user_liked,
+    #         "author": {
+    #             "id": p.user.id,
+    #             "fullname": p.user.fullname,
+    #             "username": p.user.username,
+    #             "avatar": p.user.avatar or "",
+    #         },
+    #         "era": {
+    #             "id": p.zone.era.id,
+    #             "name": p.zone.era.name,
+    #             "year_range": p.zone.era.year_range or "",
+    #         },
+    #         "zone": {"id": p.zone.id, "name": p.zone.name},
+    #     }
+    #     for p, likes_count, comments_count in paginated.items
+    # ]
 
     return success_response(
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
@@ -1029,13 +1411,13 @@ def add_comment(current_user, post_id):
 
 
 # ---------------------------
-# LIKES
+# REACTIONS (Agree/Dislike)
 # ---------------------------
-@community_bp.route("/posts/<int:post_id>/like", methods=["POST"])
+@community_bp.route("/posts/<int:post_id>/agree", methods=["POST"])
 @token_required
-def toggle_like(current_user, post_id):
+def add_agree(current_user, post_id):
     """
-    Like or unlike a post
+    Add agree reaction to a post
     ---
     tags:
       - Community
@@ -1047,43 +1429,261 @@ def toggle_like(current_user, post_id):
           type: integer
     responses:
       201:
-        description: Post liked
+        description: Agree added
       200:
-        description: Post unliked
+        description: Agree removed
       401:
         description: Unauthorized
       404:
         description: Post not found
     """
-    existing_like = Like.query.filter_by(
-        user_id=current_user.id, post_id=post_id
+    return _handle_reaction(current_user, post_id, "agree")
+
+
+@community_bp.route("/posts/<int:post_id>/disagree", methods=["POST"])
+@token_required
+def add_disagree(current_user, post_id):
+    """
+    Add disagree reaction to a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      201:
+        description: Disagree added
+      200:
+        description: Disagree removed
+      401:
+        description: Unauthorized
+      404:
+        description: Post not found
+    """
+    return _handle_reaction(current_user, post_id, "disagree")
+
+
+def _handle_reaction(current_user, post_id, reaction_type):
+    """
+    Helper function to handle agree/disagree reactions
+    """
+    # Check if post exists
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    # Check for existing reaction of any type by this user
+    existing_reaction = Like.query.filter_by(
+        user_id=current_user.id, post_id=post_id, type="post"
     ).first()
 
-    if existing_like:
-        db.session.delete(existing_like)
-        db.session.commit()
+    if existing_reaction:
+        if existing_reaction.reaction_type == reaction_type:
+            # User is clicking the same button - remove the reaction
+            db.session.delete(existing_reaction)
+            db.session.commit()
 
-        # 🔴 Emit unlike event
-        socketio.emit(
-            "post_unliked",
-            {"post_id": post_id, "user_id": current_user.id},
-            broadcast=True,
-        )
+            # Emit reaction removed event
+            socketio.emit(
+                f"post_{reaction_type}_removed",
+                {
+                    "post_id": post_id,
+                    "user_id": current_user.id,
+                    "reaction_type": reaction_type,
+                },
+                broadcast=True,
+            )
 
-        return success_response(message="Unliked")
+            return success_response(message=f"{reaction_type.capitalize()} removed")
+        else:
+            # User is switching reaction types - update existing reaction
+            existing_reaction.reaction_type = reaction_type
+            db.session.commit()
+
+            # Emit reaction changed event
+            socketio.emit(
+                f"post_reaction_changed",
+                {
+                    "post_id": post_id,
+                    "user_id": current_user.id,
+                    "old_reaction_type": existing_reaction.reaction_type,
+                    "new_reaction_type": reaction_type,
+                },
+                broadcast=True,
+            )
+
+            return success_response(message=f"Reaction changed to {reaction_type}")
     else:
-        like = Like(user_id=current_user.id, post_id=post_id)
-        db.session.add(like)
+        # Create new reaction
+        reaction = Like(
+            user_id=current_user.id,
+            post_id=post_id,
+            type="post",
+            reaction_type=reaction_type,
+        )
+        db.session.add(reaction)
         db.session.commit()
 
-        # 🔴 Emit like event
+        # Emit new reaction event
         socketio.emit(
-            "post_liked",
-            {"post_id": post_id, "user_id": current_user.id},
+            f"post_{reaction_type}_added",
+            {
+                "post_id": post_id,
+                "user_id": current_user.id,
+                "reaction_type": reaction_type,
+            },
             broadcast=True,
         )
 
-        return success_response(message="Liked", status=201)
+        return success_response(
+            message=f"{reaction_type.capitalize()} added", status=201
+        )
+
+
+# ---------------------------
+# GET REACTION COUNTS
+# ---------------------------
+@community_bp.route("/posts/<int:post_id>/reactions", methods=["GET"])
+def get_post_reactions(post_id):
+    """
+    Get agree/disagree counts for a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Reaction counts retrieved
+      404:
+        description: Post not found
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    agree_count = Like.query.filter_by(
+        post_id=post_id, type="post", reaction_type="agree"
+    ).count()
+
+    disagree_count = Like.query.filter_by(
+        post_id=post_id, type="post", reaction_type="disagree"
+    ).count()
+
+    return success_response(
+        {
+            "post_id": post_id,
+            "agree_count": agree_count,
+            "disagree_count": disagree_count,
+        },
+        "Reaction counts retrieved",
+    )
+
+
+# ---------------------------
+# GET USER REACTION STATUS
+# ---------------------------
+@community_bp.route("/posts/<int:post_id>/my-reaction", methods=["GET"])
+@token_required
+def get_my_reaction(current_user, post_id):
+    """
+    Get current user's reaction to a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: User reaction status
+      404:
+        description: Post not found
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    my_reaction = Like.query.filter_by(
+        user_id=current_user.id, post_id=post_id, type="post"
+    ).first()
+
+    reaction_data = {
+        "post_id": post_id,
+        "user_reacted": my_reaction is not None,
+        "reaction_type": my_reaction.reaction_type if my_reaction else None,
+    }
+
+    return success_response(reaction_data, "User reaction status retrieved")
+
+
+# # ---------------------------
+# # LIKES
+# # ---------------------------
+# @community_bp.route("/posts/<int:post_id>/like", methods=["POST"])
+# @token_required
+# def toggle_like(current_user, post_id):
+#     """
+#     Like or unlike a post
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: post_id
+#         required: true
+#         schema:
+#           type: integer
+#     responses:
+#       201:
+#         description: Post liked
+#       200:
+#         description: Post unliked
+#       401:
+#         description: Unauthorized
+#       404:
+#         description: Post not found
+#     """
+#     existing_like = Like.query.filter_by(
+#         user_id=current_user.id, post_id=post_id
+#     ).first()
+
+#     if existing_like:
+#         db.session.delete(existing_like)
+#         db.session.commit()
+
+#         # 🔴 Emit unlike event
+#         socketio.emit(
+#             "post_unliked",
+#             {"post_id": post_id, "user_id": current_user.id},
+#             broadcast=True,
+#         )
+
+#         return success_response(message="Unliked")
+#     else:
+#         like = Like(user_id=current_user.id, post_id=post_id)
+#         db.session.add(like)
+#         db.session.commit()
+
+#         # 🔴 Emit like event
+#         socketio.emit(
+#             "post_liked",
+#             {"post_id": post_id, "user_id": current_user.id},
+#             broadcast=True,
+#         )
+
+#         return success_response(message="Liked", status=201)
 
 
 # ---------------------------

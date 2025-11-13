@@ -677,7 +677,7 @@ def list_my_community_posts(current_user=None):
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "Posts from your communities fetched",
     )
-    
+
 
 # ---------------------------
 # BOOKMARKS
@@ -828,6 +828,14 @@ def list_all_posts(current_user=None):
             User,  # Add User to the query
             Zone,
             Era,  # Add Era to the query
+            func.count(
+                distinct(case([(Like.reaction_type == "agree", Like.id)], else_=None))
+            ).label("agree_count"),
+            func.count(
+                distinct(
+                    case([(Like.reaction_type == "disagree", Like.id)], else_=None)
+                )
+            ).label("disagree_count"),
             func.count(distinct(Like.id)).label("likes_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
         )
@@ -905,7 +913,7 @@ def list_all_posts(current_user=None):
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "All posts fetched",
     )
-    
+
 
 @community_bp.route("/posts", methods=["GET"])
 @token_required
@@ -985,7 +993,15 @@ def list_posts(current_user=None):
             Post,
             User,
             Zone,
-            Era,  
+            Era,
+            func.count(
+                distinct(case([(Like.reaction_type == "agree", Like.id)], else_=None))
+            ).label("agree_count"),
+            func.count(
+                distinct(
+                    case([(Like.reaction_type == "disagree", Like.id)], else_=None)
+                )
+            ).label("disagree_count"),
             # likes_count,
             # agree_count,
             # disagree_count,
@@ -997,7 +1013,8 @@ def list_posts(current_user=None):
         .outerjoin(Comment, Comment.post_id == Post.id)
         .join(Zone, Post.zone_id == Zone.id)
         .join(Era, Zone.era_id == Era.id)
-        .group_by(Post.id)
+        # .group_by(Post.id)
+        .group_by(Post.id, User.id, Zone.id, Era.id)
     )
 
     # If no era_id specified, default to user's communities

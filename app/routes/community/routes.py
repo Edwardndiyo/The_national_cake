@@ -593,12 +593,10 @@ def list_my_community_posts(current_user=None):
             Era,
             func.count(distinct(Like.id)).label("likes_count"),
             func.count(
-                distinct(case([(Like.reaction_type == "agree", Like.id)], else_=None))
+                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
             ).label("agree_count"),
             func.count(
-                distinct(
-                    case([(Like.reaction_type == "disagree", Like.id)], else_=None)
-                )
+                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
             ).label("disagree_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
         )
@@ -723,8 +721,12 @@ def get_bookmarks(current_user):
             Zone,
             Era,
             func.count(distinct(Like.id)).label("likes_count"),
-            func.count(distinct(sa.case([(Like.reaction_type == 'agree', Like.id)], else_=None))).label("agree_count"),
-            func.count(distinct(sa.case([(Like.reaction_type == 'disagree', Like.id)], else_=None))).label("disagree_count"),
+            func.count(
+                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
+            ).label("agree_count"),
+            func.count(
+                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
+            ).label("disagree_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
         )
         .join(Bookmark, Bookmark.post_id == Post.id)
@@ -829,12 +831,10 @@ def list_all_posts(current_user=None):
             Zone,
             Era,  # Add Era to the query
             func.count(
-                distinct(case([(Like.reaction_type == "agree", Like.id)], else_=None))
+                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
             ).label("agree_count"),
             func.count(
-                distinct(
-                    case([(Like.reaction_type == "disagree", Like.id)], else_=None)
-                )
+                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
             ).label("disagree_count"),
             func.count(distinct(Like.id)).label("likes_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
@@ -995,12 +995,10 @@ def list_posts(current_user=None):
             Zone,
             Era,
             func.count(
-                distinct(case([(Like.reaction_type == "agree", Like.id)], else_=None))
+                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
             ).label("agree_count"),
             func.count(
-                distinct(
-                    case([(Like.reaction_type == "disagree", Like.id)], else_=None)
-                )
+                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
             ).label("disagree_count"),
             # likes_count,
             # agree_count,

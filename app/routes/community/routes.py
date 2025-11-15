@@ -510,6 +510,16 @@ def create_post(current_user):
             "content": post.content,
             "media": (post.media.split("|") if post.media else []),
             "created_at": post.created_at.isoformat(),
+            "time_ago": time_ago(post.created_at),
+        "pinned": post.pinned,
+        "hot_thread": post.hot_thread,
+        "likes_count": 0,  # New posts start with 0
+        "agree_count": 0,  # New posts start with 0
+        "disagree_count": 0,  # New posts start with 0
+        "comments_count": 0,  # New posts start with 0
+        "user_agreed": False,
+        "user_disagreed": False,
+        
             "author": {
                 "id": current_user.id,
                 # "fullname": current_user.fullname,
@@ -531,6 +541,61 @@ def create_post(current_user):
     )
 
     return success_response({"post_id": post.id}, "Post created", 201)
+
+
+# ---------------------------
+# GET COMMENTS FOR POST
+# ---------------------------
+@community_bp.route("/posts/<int:post_id>/comments", methods=["GET"])
+@token_required
+def get_post_comments(current_user, post_id):
+    """
+    Get all comments for a specific post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Comments fetched successfully
+      404:
+        description: Post not found
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    comments = (
+        Comment.query.filter_by(post_id=post_id)
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
+
+    data = []
+    for comment in comments:
+        user = User.query.get(comment.user_id)
+        data.append(
+            {
+                "id": comment.id,
+                "content": comment.content,
+                "created_at": comment.created_at.isoformat(),
+                "time_ago": time_ago(comment.created_at),
+                "author": {
+                    "id": user.id,
+                    "firstname": user.firstname,
+                    "lastname": user.lastname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+            }
+        )
+
+    return success_response(data, "Comments fetched successfully")
 
 
 def time_ago(dt):
@@ -778,8 +843,8 @@ def get_bookmarks(current_user):
                 "author": {
                     "id": user.id,
                     # "fullname": current_user.fullname,
-                    "firstname": current_user.firstname,
-                    "lastname": current_user.lastname,
+                    "firstname": user.firstname,
+                    "lastname": user.lastname,
                     "username": user.username,
                     "avatar": user.avatar or "",
                 },
@@ -830,6 +895,7 @@ def list_all_posts(current_user=None):
             User,  # Add User to the query
             Zone,
             Era,  # Add Era to the query
+            func.count(distinct(Like.id)).label("likes_count"),
             func.count(
                 distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
             ).label("agree_count"),
@@ -1167,6 +1233,10 @@ def add_comment(current_user, post_id):
     if not data.get("content"):
         return error_response("Content is required", 400)
 
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
     comment = Comment(content=data["content"], user_id=current_user.id, post_id=post_id)
     db.session.add(comment)
     db.session.commit()
@@ -1177,13 +1247,41 @@ def add_comment(current_user, post_id):
         {
             "id": comment.id,
             "content": comment.content,
+            "created_at": comment.created_at.isoformat(),
+            "time_ago": time_ago(comment.created_at),
             "user_id": comment.user_id,
             "post_id": comment.post_id,
+            "author": {
+                "id": current_user.id,
+                "firstname": current_user.firstname,
+                "lastname": current_user.lastname,
+                "username": current_user.username,
+                "avatar": current_user.avatar or "",
+            },
         },
-        broadcast=True,
+        # broadcast=True,
     )
 
-    return success_response(message="Comment added successfully", status=201)
+    # return success_response(message="Comment added successfully", status=201)
+    return success_response(
+        {
+            "comment": {
+                "id": comment.id,
+                "content": comment.content,
+                "created_at": comment.created_at.isoformat(),
+                "time_ago": time_ago(comment.created_at),
+                "author": {
+                    "id": current_user.id,
+                    "firstname": current_user.firstname,
+                    "lastname": current_user.lastname,
+                    "username": current_user.username,
+                    "avatar": current_user.avatar or "",
+                },
+            }
+        },
+        "Comment added successfully",
+        status=201,
+    )
 
 
 # ---------------------------

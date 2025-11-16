@@ -750,6 +750,22 @@ def list_my_community_posts(current_user=None):
 def toggle_bookmark(current_user, post_id):
     """
     Bookmark or unbookmark a post
+    ---
+    tags:
+      - Bookmarks
+    parameters:
+      - name: post_id
+        in: path
+        type: integer
+        required: true
+        description: ID of the post to bookmark/unbookmark
+    responses:
+      201:
+        description: Post bookmarked successfully
+      200:
+        description: Bookmark removed successfully
+      404:
+        description: Post not found
     """
     post = Post.query.get(post_id)
     if not post:
@@ -775,6 +791,69 @@ def toggle_bookmark(current_user, post_id):
 def get_bookmarks(current_user):
     """
     Get current user's bookmarked posts
+    ---
+    tags:
+      - Bookmarks
+    parameters:
+      - name: page
+        in: query
+        type: integer
+        example: 1
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        example: 20
+        default: 20
+    responses:
+      200:
+        description: Bookmarked posts fetched successfully
+        examples:
+          application/json: {
+            "success": true,
+            "message": "Bookmarked posts fetched",
+            "data": {
+              "posts": [
+                {
+                  "id": 1,
+                  "title": "Post Title",
+                  "content": "Post content...",
+                  "media": ["image1.jpg", "image2.jpg"],
+                  "created_at": "2023-10-01T12:00:00",
+                  "time_ago": "2 days ago",
+                  "pinned": false,
+                  "hot_thread": true,
+                  "likes_count": 5,
+                  "agree_count": 3,
+                  "disagree_count": 2,
+                  "user_agreed": true,
+                  "user_disagreed": false,
+                  "comments_count": 8,
+                  "bookmarked": true,
+                  "author": {
+                    "id": 123,
+                    "firstname": "John",
+                    "lastname": "Doe",
+                    "username": "johndoe",
+                    "avatar": "avatar.jpg"
+                  },
+                  "era": {
+                    "id": 1,
+                    "name": "1980s",
+                    "year_range": "1980-1989"
+                  },
+                  "zone": {
+                    "id": 1,
+                    "name": "Music"
+                  }
+                }
+              ],
+              "pagination": {
+                "page": 1,
+                "total": 50
+              }
+            }
+          }
     """
     page = request.args.get("page", 1, type=int)
     per_page = request.args.get("per_page", 20, type=int)
@@ -902,7 +981,7 @@ def list_all_posts(current_user=None):
             func.count(
                 distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
             ).label("disagree_count"),
-            func.count(distinct(Like.id)).label("likes_count"),
+            # func.count(distinct(Like.id)).label("likes_count"),
             func.count(distinct(Comment.id)).label("comments_count"),
         )
         .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))

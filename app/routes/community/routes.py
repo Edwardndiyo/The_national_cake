@@ -4,7 +4,7 @@ from app import db, socketio
 from app.models import Zone, Post, Comment, Like, Event, RSVP, User, Era, user_era_membership, Badge,Bookmark
 from app.utils.decorators import token_required, roles_required
 from app.utils.responses import success_response, error_response
-from sqlalchemy import case, func, distinct
+from sqlalchemy import case, func, distinct, text
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import sqlalchemy as sa
@@ -207,6 +207,87 @@ def list_zones(current_user=None):
         print(f"❌ CRITICAL DEBUG 31: Full traceback:\n{traceback.format_exc()}")
         return error_response(f"Internal server error: {str(e)}", 500)
 
+@community_bp.route("/eras/<int:era_id>", methods=["GET"])
+@token_required
+def get_single_era(current_user, era_id):
+    """
+    Get a single era by ID with member and post counts
+    ---
+    tags:
+      - Community
+    parameters:
+      - name: era_id
+        in: path
+        type: integer
+        required: true
+        description: ID of the era to retrieve
+    responses:
+      200:
+        description: Era fetched successfully
+      404:
+        description: Era not found
+    """
+    # Get the era
+    era = Era.query.get(era_id)
+    if not era:
+        return error_response("Era not found", 404)
+
+    # Get post count
+    post_count_result = db.session.execute(
+        text(
+            """
+            SELECT COUNT(*) FROM posts 
+            WHERE zone_id IN (
+                SELECT id FROM zones WHERE era_id = :era_id
+            )
+            """
+        ),
+        {"era_id": era_id},
+    )
+    post_count = post_count_result.scalar() or 0
+
+    # Get member count
+    member_count_result = db.session.execute(
+        text("SELECT COUNT(*) FROM user_era_membership WHERE era_id = :era_id"),
+        {"era_id": era_id},
+    )
+    member_count = member_count_result.scalar() or 0
+
+    # Check if current user has joined this era
+    joined = False
+    if current_user:
+        membership_result = db.session.execute(
+            text(
+                "SELECT 1 FROM user_era_membership WHERE user_id = :user_id AND era_id = :era_id"
+            ),
+            {"user_id": current_user.id, "era_id": era_id},
+        )
+        joined = membership_result.first() is not None
+
+    # Get zones for this era
+    zones = Zone.query.filter_by(era_id=era_id).all()
+    zones_data = [
+        {
+            "id": zone.id,
+            "name": zone.name,
+            "description": zone.description or "",
+        }
+        for zone in zones
+    ]
+
+    era_data = {
+        "id": era.id,
+        "name": era.name,
+        "year_range": era.year_range or "",
+        "description": era.description or "",
+        "image": era.image or "",
+        "member_count": member_count,
+        "post_count": post_count,
+        "joined": joined,
+        "zones": zones_data,
+    }
+
+    return success_response(era_data, "Era fetched successfully")
 
 @community_bp.route("/zones-test", methods=["GET"])
 def zones_test():
@@ -741,6 +822,113 @@ def list_my_community_posts(current_user=None):
         "Posts from your communities fetched",
     )
 
+@community_bp.route("/posts/<int:post_id>", methods=["GET"])
+@token_required
+def get_single_post(current_user, post_id):
+    """
+    Get a single post by ID with full details
+    ---
+    tags:
+      - Community
+    parameters:
+      - name: post_id
+        in: path
+        type: integer
+        required: true
+        description: ID of the post to retrieve
+    responses:
+      200:
+        description: Post fetched successfully
+      404:
+        description: Post not found
+    """
+    # Query for the specific post with all counts and relationships
+    result = (
+        db.session.query(
+            Post,
+            User,
+            Zone,
+            Era,
+            func.count(distinct(Like.id)).label("likes_count"),
+            func.count(
+                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
+            ).label("agree_count"),
+            func.count(
+                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
+            ).label("disagree_count"),
+            func.count(distinct(Comment.id)).label("comments_count"),
+        )
+        .join(User, Post.user_id == User.id)
+        .join(Zone, Post.zone_id == Zone.id)
+        .join(Era, Zone.era_id == Era.id)
+        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+        .outerjoin(Comment, Comment.post_id == Post.id)
+        .filter(Post.id == post_id)
+        .group_by(Post.id, User.id, Zone.id, Era.id)
+        .first()
+    )
+
+    if not result:
+        return error_response("Post not found", 404)
+
+    # Unpack the result
+    post, user, zone, era, likes_count, agree_count, disagree_count, comments_count = result
+
+    # Get user's reaction to this post
+    user_reaction = None
+    if current_user:
+        reaction = Like.query.filter(
+            Like.user_id == current_user.id,
+            Like.post_id == post_id,
+            Like.type == "post"
+        ).first()
+        user_reaction = reaction.reaction_type if reaction else None
+
+    # Check if post is bookmarked by current user
+    is_bookmarked = False
+    if current_user:
+        bookmark = Bookmark.query.filter_by(
+            user_id=current_user.id, 
+            post_id=post_id
+        ).first()
+        is_bookmarked = bookmark is not None
+
+    # Build the post data
+    post_data = {
+        "id": post.id,
+        "title": post.title,
+        "content": post.content,
+        "media": (post.media.split("|") if post.media else []),
+        "created_at": post.created_at.isoformat(),
+        "time_ago": time_ago(post.created_at),
+        "pinned": post.pinned,
+        "hot_thread": post.hot_thread,
+        "likes_count": likes_count or 0,
+        "agree_count": agree_count or 0,
+        "disagree_count": disagree_count or 0,
+        "user_agreed": user_reaction == "agree",
+        "user_disagreed": user_reaction == "disagree",
+        "comments_count": comments_count or 0,
+        "bookmarked": is_bookmarked,
+        "author": {
+            "id": user.id,
+            "firstname": user.firstname,
+            "lastname": user.lastname,
+            "username": user.username,
+            "avatar": user.avatar or "",
+        },
+        "era": {
+            "id": era.id,
+            "name": era.name,
+            "year_range": era.year_range or "",
+        },
+        "zone": {
+            "id": zone.id, 
+            "name": zone.name
+        },
+    }
+
+    return success_response(post_data, "Post fetched successfully")
 
 # ---------------------------
 # BOOKMARKS
@@ -855,91 +1043,201 @@ def get_bookmarks(current_user):
             }
           }
     """
-    page = request.args.get("page", 1, type=int)
-    per_page = request.args.get("per_page", 20, type=int)
+    
+    try:
+        print(f"🔍 DEBUG get_bookmarks: Starting for user_id={current_user.id}")
+        
+        page = request.args.get("page", 1, type=int)
+        per_page = request.args.get("per_page", 20, type=int)
+        
+        print(f"🔍 DEBUG: page={page}, per_page={per_page}")
 
-    query = (
-        db.session.query(
-            Post,
-            User,
-            Zone,
-            Era,
-            func.count(distinct(Like.id)).label("likes_count"),
-            func.count(
-                distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
-            ).label("agree_count"),
-            func.count(
-                distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
-            ).label("disagree_count"),
-            func.count(distinct(Comment.id)).label("comments_count"),
-        )
-        .join(Bookmark, Bookmark.post_id == Post.id)
-        .join(User, Post.user_id == User.id)
-        .join(Zone, Post.zone_id == Zone.id)
-        .join(Era, Zone.era_id == Era.id)
-        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
-        .outerjoin(Comment, Comment.post_id == Post.id)
-        .filter(Bookmark.user_id == current_user.id)
-        .group_by(Post.id, User.id, Zone.id, Era.id)
-    )
-
-    paginated = query.order_by(Bookmark.created_at.desc()).paginate(
-        page=page, per_page=per_page, error_out=False
-    )
-
-    # Get user reactions for bookmarked posts
-    user_reactions = {}
-    post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
-    if post_ids:
-        reactions = Like.query.filter(
-            Like.user_id == current_user.id,
-            Like.post_id.in_(post_ids),
-            Like.type == "post"
-        ).all()
-        user_reactions = {r.post_id: r.reaction_type for r in reactions}
-
-    data = []
-    for post, user, zone, era, likes_count, agree_count, disagree_count, comments_count in paginated.items:
-        user_reaction = user_reactions.get(post.id)
-
-        data.append(
-            {
-                "id": post.id,
-                "title": post.title,
-                "content": post.content,
-                "media": (post.media.split("|") if post.media else []),
-                "created_at": post.created_at.isoformat(),
-                "time_ago": time_ago(post.created_at),
-                "pinned": post.pinned,
-                "hot_thread": post.hot_thread,
-                "likes_count": likes_count or 0,
-                "agree_count": agree_count or 0,
-                "disagree_count": disagree_count or 0,
-                "user_agreed": user_reaction == "agree",
-                "user_disagreed": user_reaction == "disagree",
-                "comments_count": comments_count or 0,
-                "bookmarked": True,  # Always true for bookmarks endpoint
-                "author": {
-                    "id": user.id,
-                    # "fullname": current_user.fullname,
-                    "firstname": user.firstname,
-                    "lastname": user.lastname,
-                    "username": user.username,
-                    "avatar": user.avatar or "",
-                },
-                "era": {
-                    "id": era.id,
-                    "name": era.name,
-                    "year_range": era.year_range or "",
-                },
-                "zone": {"id": zone.id, "name": zone.name},
-            }
+        # Option 1: Include Bookmark in the GROUP BY clause
+        query = (
+            db.session.query(
+                Post,
+                User,
+                Zone,
+                Era,
+                Bookmark,  # Add Bookmark to the query
+                func.count(distinct(Like.id)).label("likes_count"),
+                func.count(
+                    distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
+                ).label("agree_count"),
+                func.count(
+                    distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
+                ).label("disagree_count"),
+                func.count(distinct(Comment.id)).label("comments_count"),
+            )
+            .join(Bookmark, Bookmark.post_id == Post.id)
+            .join(User, Post.user_id == User.id)
+            .join(Zone, Post.zone_id == Zone.id)
+            .join(Era, Zone.era_id == Era.id)
+            .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+            .outerjoin(Comment, Comment.post_id == Post.id)
+            .filter(Bookmark.user_id == current_user.id)
+            .group_by(Post.id, User.id, Zone.id, Era.id, Bookmark.id)  # Add Bookmark.id to GROUP BY
         )
 
-    return success_response(
-        {"posts": data, "pagination": {"page": page, "total": paginated.total}},
-        "Bookmarked posts fetched",
-    )
+        print("🔍 DEBUG: Executing paginated query...")
+        paginated = query.order_by(Bookmark.created_at.desc()).paginate(
+            page=page, per_page=per_page, error_out=False
+        )
+
+        print(f"🔍 DEBUG: Found {paginated.total} total bookmarks, {len(paginated.items)} on this page")
+
+        # Get user reactions for bookmarked posts
+        user_reactions = {}
+        post_ids = [post.id for post, _, _, _, _, _, _, _, _ in paginated.items]  # Updated unpacking
+        print(f"🔍 DEBUG: Post IDs to check reactions for: {post_ids}")
+        
+        if post_ids:
+            reactions = Like.query.filter(
+                Like.user_id == current_user.id,
+                Like.post_id.in_(post_ids),
+                Like.type == "post"
+            ).all()
+            user_reactions = {r.post_id: r.reaction_type for r in reactions}
+            print(f"🔍 DEBUG: User reactions found: {user_reactions}")
+
+        data = []
+        # Updated unpacking to include Bookmark
+        for post, user, zone, era, bookmark, likes_count, agree_count, disagree_count, comments_count in paginated.items:
+            user_reaction = user_reactions.get(post.id)
+            
+            print(f"🔍 DEBUG: Processing post {post.id} - {post.title}")
+
+            data.append(
+                {
+                    "id": post.id,
+                    "title": post.title,
+                    "content": post.content,
+                    "media": (post.media.split("|") if post.media else []),
+                    "created_at": post.created_at.isoformat(),
+                    "time_ago": time_ago(post.created_at),
+                    "pinned": post.pinned,
+                    "hot_thread": post.hot_thread,
+                    "likes_count": likes_count or 0,
+                    "agree_count": agree_count or 0,
+                    "disagree_count": disagree_count or 0,
+                    "user_agreed": user_reaction == "agree",
+                    "user_disagreed": user_reaction == "disagree",
+                    "comments_count": comments_count or 0,
+                    "bookmarked": True,
+                    "bookmarked_at": bookmark.created_at.isoformat(),  # Optional: include bookmark timestamp
+                    "author": {
+                        "id": user.id,
+                        "firstname": user.firstname,
+                        "lastname": user.lastname,
+                        "username": user.username,
+                        "avatar": user.avatar or "",
+                    },
+                    "era": {
+                        "id": era.id,
+                        "name": era.name,
+                        "year_range": era.year_range or "",
+                    },
+                    "zone": {"id": zone.id, "name": zone.name},
+                }
+            )
+
+        print(f"✅ DEBUG: Successfully processed {len(data)} posts")
+        return success_response(
+            {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+            "Bookmarked posts fetched",
+        )
+
+    except Exception as e:
+        print(f"❌ ERROR in get_bookmarks: {str(e)}")
+        import traceback
+        print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
+        return error_response(f"Internal server error: {str(e)}", 500)
+      
+    # page = request.args.get("page", 1, type=int)
+    # per_page = request.args.get("per_page", 20, type=int)
+
+    # query = (
+    #     db.session.query(
+    #         Post,
+    #         User,
+    #         Zone,
+    #         Era,
+    #         func.count(distinct(Like.id)).label("likes_count"),
+    #         func.count(
+    #             distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
+    #         ).label("agree_count"),
+    #         func.count(
+    #             distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
+    #         ).label("disagree_count"),
+    #         func.count(distinct(Comment.id)).label("comments_count"),
+    #     )
+    #     .join(Bookmark, Bookmark.post_id == Post.id)
+    #     .join(User, Post.user_id == User.id)
+    #     .join(Zone, Post.zone_id == Zone.id)
+    #     .join(Era, Zone.era_id == Era.id)
+    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+    #     .outerjoin(Comment, Comment.post_id == Post.id)
+    #     .filter(Bookmark.user_id == current_user.id)
+    #     .group_by(Post.id, User.id, Zone.id, Era.id)
+    # )
+
+    # paginated = query.order_by(Bookmark.created_at.desc()).paginate(
+    #     page=page, per_page=per_page, error_out=False
+    # )
+
+    # # Get user reactions for bookmarked posts
+    # user_reactions = {}
+    # post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+    # if post_ids:
+    #     reactions = Like.query.filter(
+    #         Like.user_id == current_user.id,
+    #         Like.post_id.in_(post_ids),
+    #         Like.type == "post"
+    #     ).all()
+    #     user_reactions = {r.post_id: r.reaction_type for r in reactions}
+
+    # data = []
+    # for post, user, zone, era, likes_count, agree_count, disagree_count, comments_count in paginated.items:
+    #     user_reaction = user_reactions.get(post.id)
+
+    #     data.append(
+    #         {
+    #             "id": post.id,
+    #             "title": post.title,
+    #             "content": post.content,
+    #             "media": (post.media.split("|") if post.media else []),
+    #             "created_at": post.created_at.isoformat(),
+    #             "time_ago": time_ago(post.created_at),
+    #             "pinned": post.pinned,
+    #             "hot_thread": post.hot_thread,
+    #             "likes_count": likes_count or 0,
+    #             "agree_count": agree_count or 0,
+    #             "disagree_count": disagree_count or 0,
+    #             "user_agreed": user_reaction == "agree",
+    #             "user_disagreed": user_reaction == "disagree",
+    #             "comments_count": comments_count or 0,
+    #             "bookmarked": True,  # Always true for bookmarks endpoint
+    #             "author": {
+    #                 "id": user.id,
+    #                 # "fullname": current_user.fullname,
+    #                 "firstname": user.firstname,
+    #                 "lastname": user.lastname,
+    #                 "username": user.username,
+    #                 "avatar": user.avatar or "",
+    #             },
+    #             "era": {
+    #                 "id": era.id,
+    #                 "name": era.name,
+    #                 "year_range": era.year_range or "",
+    #             },
+    #             "zone": {"id": zone.id, "name": zone.name},
+    #         }
+    #     )
+
+    # return success_response(
+    #     {"posts": data, "pagination": {"page": page, "total": paginated.total}},
+    #     "Bookmarked posts fetched",
+    # )
 
 @community_bp.route("/posts/all", methods=["GET"])
 @token_required
@@ -1236,12 +1534,49 @@ def list_posts(current_user=None):
     )
 
 
+# @community_bp.route("/posts/<int:post_id>", methods=["DELETE"])
+# @token_required
+# # @roles_required("admin")
+# def delete_post(current_user, post_id):
+#     """
+#     Delete a post (Admin only)
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: post_id
+#         required: true
+#         schema:
+#           type: integer
+#     responses:
+#       200:
+#         description: Post deleted successfully
+#       401:
+#         description: Unauthorized
+#       403:
+#         description: Forbidden - Admin role required
+#       404:
+#         description: Post not found
+#     """
+#     post = Post.query.get(post_id)
+#     if not post:
+#         return error_response("Post not found", 404)
+
+#     db.session.delete(post)
+#     db.session.commit()
+
+#     # 🔴 Emit real-time event
+#     socketio.emit("post_deleted", {"id": post_id}, broadcast=True)
+
+#     return success_response(message="Post deleted successfully")
+
+
 @community_bp.route("/posts/<int:post_id>", methods=["DELETE"])
 @token_required
-@roles_required("admin")
 def delete_post(current_user, post_id):
     """
-    Delete a post (Admin only)
+    Delete a post (Admin or Post Owner only)
     ---
     tags:
       - Community
@@ -1257,21 +1592,41 @@ def delete_post(current_user, post_id):
       401:
         description: Unauthorized
       403:
-        description: Forbidden - Admin role required
+        description: Forbidden - Not authorized to delete this post
       404:
         description: Post not found
     """
-    post = Post.query.get(post_id)
-    if not post:
-        return error_response("Post not found", 404)
+    try:
+        post = Post.query.get(post_id)
+        if not post:
+            return error_response("Post not found", 404)
 
-    db.session.delete(post)
-    db.session.commit()
+        # Check if user is either admin OR the post owner
+        is_admin = hasattr(current_user, "role") and current_user.role == "admin"
+        is_owner = post.user_id == current_user.id
 
-    # 🔴 Emit real-time event
-    socketio.emit("post_deleted", {"id": post_id}, broadcast=True)
+        if not (is_admin or is_owner):
+            return error_response("You are not authorized to delete this post", 403)
 
-    return success_response(message="Post deleted successfully")
+        # Store post info for the socket event before deletion
+        post_info = {"id": post.id, "title": post.title, "author_id": post.user_id}
+
+        db.session.delete(post)
+        db.session.commit()
+
+        # 🔴 Emit real-time event
+        socketio.emit(
+            "post_deleted",
+            {"id": post_id, "deleted_by": current_user.id, "was_admin": is_admin},
+            broadcast=True,
+        )
+
+        return success_response(message="Post deleted successfully")
+
+    except Exception as e:
+        print(f"❌ ERROR in delete_post: {str(e)}")
+        db.session.rollback()
+        return error_response("Failed to delete post", 500)
 
 
 # ---------------------------

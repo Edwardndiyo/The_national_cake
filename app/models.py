@@ -106,6 +106,23 @@ class Zone(db.Model):
     # era = db.relationship("Era", backref="zones", lazy=True)
 
 
+class Reshare(db.Model):
+    __tablename__ = "reshares"
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+    post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # Unique constraint to prevent duplicate reshares
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'post_id', name='unique_user_reshare'),
+    )
+    
+    # Relationships
+    user = db.relationship("User", backref="user_reshares")
+    post = db.relationship("Post", backref="post_reshares")
+    
+
 class Post(db.Model):
     __tablename__ = "posts"
     id = db.Column(db.Integer, primary_key=True)
@@ -119,12 +136,25 @@ class Post(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     zone_id = db.Column(db.Integer, db.ForeignKey("zones.id"), nullable=False)
 
+    # New field for reshare counter
+    reshare_count = db.Column(db.Integer, default=0)
+
     # ADD THIS RELATIONSHIP:
     # FIX: Use back_populates instead of backref
     user = db.relationship("User", back_populates="posts")
     zone = db.relationship("Zone", back_populates="posts")
     # user = db.relationship("User", backref="user_posts", lazy=True)
     # zone = db.relationship("Zone", backref="posts", lazy=True)
+
+
+# class Comment(db.Model):
+#     __tablename__ = "comments"
+#     id = db.Column(db.Integer, primary_key=True)
+#     content = db.Column(db.Text, nullable=False)
+#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
+#     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
 
 
 class Comment(db.Model):
@@ -135,17 +165,19 @@ class Comment(db.Model):
 
     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=False)
+    parent_comment_id = db.Column(
+        db.Integer, db.ForeignKey("comments.id"), nullable=True
+    )  # New field for nested comments
 
+    # Relationship for nested comments
+    parent_comment = db.relationship(
+        "Comment", remote_side=[id], backref=db.backref("replies", lazy="dynamic")
+    )
 
-# class Like(db.Model):
-#     __tablename__ = "likes"
-#     id = db.Column(db.Integer, primary_key=True)
-#     type = db.Column(db.String(20), default="post")
-#     created_at = db.Column(db.DateTime, default=datetime.utcnow)
-
-#     user_id = db.Column(db.Integer, db.ForeignKey("users.id"), nullable=False)
-#     post_id = db.Column(db.Integer, db.ForeignKey("posts.id"), nullable=True)
-#     comment_id = db.Column(db.Integer, db.ForeignKey("comments.id"), nullable=True)
+    # Add index for better performance
+    __table_args__ = (
+        db.Index("ix_comments_post_id_parent", "post_id", "parent_comment_id"),
+    )
 
 
 class Like(db.Model):

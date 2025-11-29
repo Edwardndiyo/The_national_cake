@@ -24,6 +24,7 @@ from app.routes.badges.routes import badge_bp
 from app.routes.events.routes import events_bp
 from app.routes.feedback.routes import feedback_bp
 from flasgger import Swagger
+from app.routes.health import health_bp
 
 
 def create_app():
@@ -57,132 +58,18 @@ def create_app():
     socketio.init_app(app)
     mail.init_app(app)
 
-    # ✅ Run migrations ONLY ONCE when app starts
+    # --- ADD THIS: Automatic database initialization ---
+    with app.app_context():
+        try:
+            print("🔄 Checking database tables...")
+            # Try to create all tables
+            db.create_all()
+            print("✅ Database tables created/verified successfully!")
+        except Exception as e:
+            print(f"❌ Error creating database tables: {e}")
+            import traceback
 
-    # with app.app_context():
-    #     try:
-    #         print("🔄 Running safe database schema check...")
-
-    #         from sqlalchemy import inspect, text
-
-    #         # Try normal migrations first
-    #         try:
-    #             from flask_migrate import upgrade
-
-    #             upgrade()
-    #             print("✅ Normal migrations applied successfully!")
-    #             return  # Skip auto-migrate if normal migrations worked
-    #         except Exception as migrate_error:
-    #             print(f"⚠️  Normal migrations failed: {migrate_error}")
-    #             print("🔄 Falling back to auto-column sync...")
-
-    #         inspector = inspect(db.engine)
-
-    #         # Get all tables from models
-    #         tables = db.Model.__subclasses__()
-
-    #         changes_made = False
-    #         for table_class in tables:
-    #             table_name = table_class.__tablename__
-
-    #             try:
-    #                 # Check if table exists
-    #                 if not inspector.has_table(table_name):
-    #                     print(f"⚠️  Table '{table_name}' doesn't exist - skipping")
-    #                     continue
-
-    #                 print(f"📋 Checking table: {table_name}")
-
-    #                 # Get expected columns from model
-    #                 expected_columns = {}
-    #                 for column in table_class.__table__.columns:
-    #                     expected_columns[column.name] = column.type
-
-    #                 # Get existing columns from database
-    #                 existing_columns = {
-    #                     col["name"] for col in inspector.get_columns(table_name)
-    #                 }
-
-    #                 # Find and add ONLY missing columns (safe operation)
-    #                 missing_columns = set(expected_columns.keys()) - existing_columns
-
-    #                 for column_name in missing_columns:
-    #                     column_type = expected_columns[column_name]
-    #                     try:
-    #                         # Convert SQLAlchemy type to SQL string
-    #                         type_str = str(column_type).split("(")[
-    #                             0
-    #                         ]  # Simple type name
-
-    #                         db.session.execute(
-    #                             text(
-    #                                 f"ALTER TABLE {table_name} ADD COLUMN {column_name} {type_str}"
-    #                             )
-    #                         )
-    #                         print(
-    #                             f"   ✅ Added column '{column_name}' ({type_str}) to '{table_name}'"
-    #                         )
-    #                         changes_made = True
-    #                     except Exception as col_error:
-    #                         print(
-    #                             f"   ❌ Failed to add column '{column_name}': {col_error}"
-    #                         )
-
-    #             except Exception as table_error:
-    #                 print(f"   ❌ Error processing table '{table_name}': {table_error}")
-
-    #         if changes_made:
-    #             db.session.commit()
-    #             print("✅ Database schema sync completed with changes!")
-    #         else:
-    #             print("✅ Database schema is already in sync!")
-
-    #     except Exception as e:
-    #         print(f"❌ Database schema sync completely failed: {e}")
-    #         db.session.rollback()
-
-    # with app.app_context():
-    #     try:
-    #         from sqlalchemy import text
-
-    #         # Check and add missing columns to eras table
-    #         result = db.session.execute(
-    #             text(
-    #                 """
-    #             SELECT column_name
-    #             FROM information_schema.columns
-    #             WHERE table_name='eras'
-    #         """
-    #             )
-    #         )
-    #         existing_columns = {row[0] for row in result}
-
-    #         missing_columns = []
-    #         if "year_range" not in existing_columns:
-    #             missing_columns.append("ADD COLUMN year_range VARCHAR(50)")
-    #         if "image" not in existing_columns:
-    #             missing_columns.append("ADD COLUMN image VARCHAR(255)")
-
-    #         if missing_columns:
-    #             print("🔄 Adding missing columns to eras table...")
-    #             alter_sql = f"ALTER TABLE eras {', '.join(missing_columns)}"
-    #             db.session.execute(text(alter_sql))
-    #             db.session.commit()
-    #             print("✅ Added missing columns to eras table!")
-
-    #     except Exception as e:
-    #         print(f"❌ Could not auto-add columns: {e}")
-    #         db.session.rollback()
-
-    # with app.app_context():
-    #     try:
-    #         from flask_migrate import upgrade
-
-    #         print("🔄 Applying migrations on startup...")
-    #         upgrade()
-    #         print("✅ Migrations applied successfully!")
-    #     except Exception as e:
-    #         print(f"❌ Migration failed: {e}")
+            print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
 
     # --- SIMPLE MIGRATION COMMAND ---
     @app.cli.command("db-migrate")
@@ -202,6 +89,7 @@ def create_app():
     app.register_blueprint(badge_bp)
     app.register_blueprint(events_bp)
     app.register_blueprint(feedback_bp)
+    app.register_blueprint(health_bp)
 
     from app.routes import init_routes
 

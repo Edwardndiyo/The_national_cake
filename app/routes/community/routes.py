@@ -1,7 +1,8 @@
 # app/routes/community/routes.py
 from flask import Blueprint, request
+from flask_jwt_extended import current_user
 from app import db, socketio
-from app.models import Zone, Post, Comment, Like, Event, RSVP, User, Era, user_era_membership, Badge,Bookmark
+from app.models import Reshare, Zone, Post, Comment, Like, Event, RSVP, User, Era, user_era_membership, Badge,Bookmark
 from app.utils.decorators import token_required, roles_required
 from app.utils.responses import success_response, error_response
 from sqlalchemy import case, func, distinct, text
@@ -302,122 +303,6 @@ def zones_test():
         return error_response(f"Test failed: {str(e)}", 500)
 
 
-# -------------------------------------------------
-# ZONES → ERAS (new endpoint name kept for backward compat)
-# -------------------------------------------------
-# @community_bp.route("/zones", methods=["GET"])
-# @token_required  # works for guests too
-# def list_zones(current_user=None):
-#     """
-#     List all Eras (with member/post counts and joined status)
-#     ---
-#     tags:
-#       - Community
-#     parameters:
-#       - name: joined
-#         in: query
-#         type: boolean
-#         description: Filter to eras the current user has joined
-#     responses:
-#       200:
-#         description: List of eras
-#         schema:
-#           type: array
-#           items:
-#             type: object
-#             properties:
-#               id: {type: integer}
-#               name: {type: string}
-#               year_range: {type: string}
-#               description: {type: string}
-#               image: {type: string}
-#               member_count: {type: integer}
-#               post_count: {type: integer}
-#               joined: {type: boolean}
-#     """
-
-#     try:
-#         print("🔍 DEBUG: Starting list_zones endpoint")
-#         joined_only = request.args.get("joined", "").lower() == "true"
-#         print(f"🔍 DEBUG: joined_only = {joined_only}, current_user = {current_user is not None}")
-
-#         # Handle joined filter for guest users
-#         if joined_only and not current_user:
-#             print("🔍 DEBUG: Guest user requested joined eras - returning empty")
-#             return success_response([], "No joined eras for unauthenticated user")
-
-#         # STEP 1: Get eras safely
-#         try:
-#             if joined_only and current_user:
-#                 print("🔍 DEBUG: Getting user's joined eras")
-#                 eras = current_user.joined_eras
-#                 print(f"🔍 DEBUG: Found {len(eras)} joined eras")
-#             else:
-#                 print("🔍 DEBUG: Getting all eras")
-#                 eras = Era.query.all()
-#                 print(f"🔍 DEBUG: Found {len(eras)} total eras")
-#         except Exception as era_error:
-#             print(f"❌ DEBUG: Error getting eras: {era_error}")
-#             return error_response("Error fetching eras", 500)
-
-#         # STEP 2: Get user's joined era IDs safely
-#         user_era_ids = set()
-#         if current_user:
-#             try:
-#                 print("🔍 DEBUG: Getting user's joined era IDs")
-#                 user_era_ids = {era.id for era in current_user.joined_eras}
-#                 print(f"🔍 DEBUG: User has joined {len(user_era_ids)} eras: {user_era_ids}")
-#             except Exception as user_error:
-#                 print(f"❌ DEBUG: Error getting user eras: {user_error}")
-#                 # Continue without user era IDs
-
-#         # STEP 3: Build response data
-#         data = []
-#         for era in eras:
-#             try:
-#                 print(f"🔍 DEBUG: Processing era {era.id}: {era.name}")
-
-#                 # Simple counts (skip complex queries for now)
-#                 post_count = 0
-#                 member_count = 0
-
-#                 # Try to get counts if needed (comment out for now to test)
-#                 # post_count = db.session.query(Post).join(Zone).filter(Zone.era_id == era.id).count()
-#                 # member_count = db.session.query(user_era_membership).filter(user_era_membership.c.era_id == era.id).count()
-
-#                 era_data = {
-#                     "id": era.id,
-#                     "name": era.name,
-#                     "year_range": era.year_range or "",
-#                     "description": era.description or "",
-#                     "image": era.image or "",
-#                     "member_count": member_count,
-#                     "post_count": post_count,
-#                     "joined": era.id in user_era_ids,
-#                 }
-#                 data.append(era_data)
-#                 print(f"🔍 DEBUG: Added era {era.id} to response")
-
-#             except Exception as era_process_error:
-#                 print(f"❌ DEBUG: Error processing era {era.id}: {era_process_error}")
-#                 # Skip this era but continue with others
-
-#         # Build response message
-#         message = "Eras fetched successfully"
-#         if joined_only and current_user:
-#             message = f"Showing {len(data)} joined eras"
-#         elif not current_user:
-#             message = "Eras fetched (sign in to join communities)"
-
-#         print(f"🔍 DEBUG: Returning {len(data)} eras")
-#         return success_response(data, message)
-
-#     except Exception as e:
-#         print(f"❌ CRITICAL ERROR in list_zones: {str(e)}")
-#         import traceback
-#         print(f"❌ FULL TRACEBACK:\n{traceback.format_exc()}")
-#         return error_response("Internal server error", 500)
-
 @community_bp.route("/zones", methods=["POST"])
 @token_required
 @roles_required("admin")
@@ -631,7 +516,7 @@ def create_post(current_user):
 @token_required
 def get_post_comments(current_user, post_id):
     """
-    Get all comments for a specific post
+    Get all comments for a specific post with nested replies
     ---
     tags:
       - Community
@@ -651,32 +536,99 @@ def get_post_comments(current_user, post_id):
     if not post:
         return error_response("Post not found", 404)
 
-    comments = (
-        Comment.query.filter_by(post_id=post_id)
+    # Get top-level comments (comments without parents)
+    top_level_comments = (
+        Comment.query.filter_by(post_id=post_id, parent_comment_id=None)
         .order_by(Comment.created_at.asc())
         .all()
     )
 
-    data = []
-    for comment in comments:
+    def build_comment_tree(comment):
+        """Recursively build comment tree with replies"""
         user = User.query.get(comment.user_id)
-        data.append(
-            {
-                "id": comment.id,
-                "content": comment.content,
-                "created_at": comment.created_at.isoformat(),
-                "time_ago": time_ago(comment.created_at),
-                "author": {
-                    "id": user.id,
-                    "firstname": user.firstname,
-                    "lastname": user.lastname,
-                    "username": user.username,
-                    "avatar": user.avatar or "",
-                },
-            }
-        )
+        comment_data = {
+            "id": comment.id,
+            "content": comment.content,
+            "created_at": comment.created_at.isoformat(),
+            "time_ago": time_ago(comment.created_at),
+            "author": {
+                "id": user.id,
+                "firstname": user.firstname,
+                "lastname": user.lastname,
+                "username": user.username,
+                "avatar": user.avatar or "",
+            },
+            "replies": []
+        }
+        
+        # Get replies for this comment
+        replies = Comment.query.filter_by(parent_comment_id=comment.id)\
+                              .order_by(Comment.created_at.asc())\
+                              .all()
+        
+        for reply in replies:
+            comment_data["replies"].append(build_comment_tree(reply))
+            
+        return comment_data
+
+    # Build the comment tree
+    data = []
+    for comment in top_level_comments:
+        data.append(build_comment_tree(comment))
 
     return success_response(data, "Comments fetched successfully")
+
+
+# @community_bp.route("/posts/<int:post_id>/comments", methods=["GET"])
+# @token_required
+# def get_post_comments(current_user, post_id):
+#     """
+#     Get all comments for a specific post
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: post_id
+#         required: true
+#         schema:
+#           type: integer
+#     responses:
+#       200:
+#         description: Comments fetched successfully
+#       404:
+#         description: Post not found
+#     """
+#     post = Post.query.get(post_id)
+#     if not post:
+#         return error_response("Post not found", 404)
+
+#     comments = (
+#         Comment.query.filter_by(post_id=post_id)
+#         .order_by(Comment.created_at.asc())
+#         .all()
+#     )
+
+#     data = []
+#     for comment in comments:
+#         user = User.query.get(comment.user_id)
+#         data.append(
+#             {
+#                 "id": comment.id,
+#                 "content": comment.content,
+#                 "created_at": comment.created_at.isoformat(),
+#                 "time_ago": time_ago(comment.created_at),
+#                 "author": {
+#                     "id": user.id,
+#                     "firstname": user.firstname,
+#                     "lastname": user.lastname,
+#                     "username": user.username,
+#                     "avatar": user.avatar or "",
+#                 },
+#             }
+#         )
+
+#     return success_response(data, "Comments fetched successfully")
 
 
 def time_ago(dt):
@@ -778,6 +730,14 @@ def list_my_community_posts(current_user=None):
         bookmarked_posts = {bm.post_id for bm in bookmarks}
 
     data = []
+    if current_user:
+            post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+            if post_ids:
+                reshares = Reshare.query.filter(
+                    Reshare.user_id == current_user.id,
+                    Reshare.post_id.in_(post_ids)
+                ).all()
+                user_reshared_posts = {r.post_id for r in reshares}
     for (
         post,
         user,  # Post author
@@ -790,6 +750,7 @@ def list_my_community_posts(current_user=None):
     ) in paginated.items:
         user_reaction = user_reactions.get(post.id)
         is_bookmarked = post.id in bookmarked_posts
+        is_reshared = post.id in user_reshared_posts
 
         data.append(
             {
@@ -808,6 +769,7 @@ def list_my_community_posts(current_user=None):
                 "user_disagreed": user_reaction == "disagree",
                 "comments_count": comments_count or 0,
                 "bookmarked": is_bookmarked,  # Add bookmarked status
+                "reshared": is_reshared,  # Add reshared status
                 "author": {
                     "id": user.id,
                     "firstname": user.firstname,  # FIXED: Use post author's firstname
@@ -828,111 +790,6 @@ def list_my_community_posts(current_user=None):
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "Posts from your communities fetched",
     )
-
-
-    # page = request.args.get("page", 1, type=int)
-    # per_page = request.args.get("per_page", 20, type=int)
-
-    # # Get the eras the user has joined
-    # user_era_ids = [era.id for era in current_user.joined_eras]
-
-    # if not user_era_ids:
-    #     return success_response(
-    #         {"posts": [], "pagination": {"page": page, "total": 0}},
-    #         "No posts found - user hasn't joined any communities",
-    #     )
-
-    # # FIXED QUERY: Added agree_count and disagree_count
-    # query = (
-    #     db.session.query(
-    #         Post,
-    #         User,
-    #         Zone,
-    #         Era,
-    #         func.count(distinct(Like.id)).label("likes_count"),
-    #         func.count(
-    #             distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
-    #         ).label("agree_count"),
-    #         func.count(
-    #             distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
-    #         ).label("disagree_count"),
-    #         func.count(distinct(Comment.id)).label("comments_count"),
-    #     )
-    #     .join(User, Post.user_id == User.id)
-    #     .join(Zone, Post.zone_id == Zone.id)
-    #     .join(Era, Zone.era_id == Era.id)
-    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
-    #     .outerjoin(Comment, Comment.post_id == Post.id)
-    #     .filter(Era.id.in_(user_era_ids))
-    #     .group_by(Post.id, User.id, Zone.id, Era.id)
-    # )
-
-    # paginated = query.order_by(Post.created_at.desc()).paginate(
-    #     page=page, per_page=per_page, error_out=False
-    # )
-
-    # # Get user's reactions for all posts in this page
-    # user_reactions = {}
-    # if current_user:
-    #     post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
-    #     if post_ids:
-    #         reactions = Like.query.filter(
-    #             Like.user_id == current_user.id,
-    #             Like.post_id.in_(post_ids),
-    #             Like.type == "post",
-    #         ).all()
-    #         user_reactions = {r.post_id: r.reaction_type for r in reactions}
-
-    # data = []
-    # for (
-    #     post,
-    #     user,
-    #     zone,
-    #     era,
-    #     likes_count,
-    #     agree_count,
-    #     disagree_count,
-    #     comments_count,
-    # ) in paginated.items:
-    #     user_reaction = user_reactions.get(post.id)
-
-    #     data.append(
-    #         {
-    #             "id": post.id,
-    #             "title": post.title,
-    #             "content": post.content,
-    #             "media": (post.media.split("|") if post.media else []),
-    #             "created_at": post.created_at.isoformat(),
-    #             "time_ago": time_ago(post.created_at),
-    #             "pinned": post.pinned,
-    #             "hot_thread": post.hot_thread,
-    #             "likes_count": likes_count or 0,
-    #             "agree_count": agree_count or 0,
-    #             "disagree_count": disagree_count or 0,
-    #             "user_agreed": user_reaction == "agree",
-    #             "user_disagreed": user_reaction == "disagree",
-    #             "comments_count": comments_count or 0,
-    #             "user_liked": False,  # Keep for backward compatibility
-    #             "author": {
-    #                 "id": user.id,
-    #                 "firstname": user.firstname,  # Changed from fullname
-    #                 "lastname": user.lastname,  # Added lastname
-    #                 "username": user.username,
-    #                 "avatar": user.avatar or "",
-    #             },
-    #             "era": {
-    #                 "id": era.id,
-    #                 "name": era.name,
-    #                 "year_range": era.year_range or "",
-    #             },
-    #             "zone": {"id": zone.id, "name": zone.name},
-    #         }
-    #     )
-
-    # return success_response(
-    #     {"posts": data, "pagination": {"page": page, "total": paginated.total}},
-    #     "Posts from your communities fetched",
-    # )
 
 
 @community_bp.route("/posts/my-posts", methods=["GET"])
@@ -1063,6 +920,15 @@ def get_my_posts(current_user):
             bookmarked_posts = {bm.post_id for bm in bookmarks}
 
         data = []
+        user_reshared_posts = set()
+        if current_user:
+            post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+            if post_ids:
+                reshares = Reshare.query.filter(
+                    Reshare.user_id == current_user.id,
+                    Reshare.post_id.in_(post_ids)
+                ).all()
+                user_reshared_posts = {r.post_id for r in reshares}
         for (
             post,
             user,  # This should be the current user (post author)
@@ -1075,6 +941,7 @@ def get_my_posts(current_user):
         ) in paginated.items:
             user_reaction = user_reactions.get(post.id)
             is_bookmarked = post.id in bookmarked_posts
+            is_reshared = post.id in user_reshared_posts
 
             data.append(
                 {
@@ -1093,6 +960,8 @@ def get_my_posts(current_user):
                     "user_disagreed": user_reaction == "disagree",
                     "comments_count": comments_count or 0,
                     "bookmarked": is_bookmarked,
+                    "reshared": is_reshared,
+                    
                     "author": {
                         "id": user.id,
                         "firstname": user.firstname,
@@ -1120,7 +989,7 @@ def get_my_posts(current_user):
         import traceback
         print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
         return error_response(f"Failed to fetch your posts: {str(e)}", 500)
-      
+
 
 @community_bp.route("/users/<int:user_id>/posts", methods=["GET"])
 @token_required
@@ -1212,6 +1081,15 @@ def get_user_posts(current_user, user_id):
             bookmarked_posts = {bm.post_id for bm in bookmarks}
 
         data = []
+        user_reshared_posts = set()
+        if current_user:
+            post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+            if post_ids:
+                reshares = Reshare.query.filter(
+                    Reshare.user_id == current_user.id,
+                    Reshare.post_id.in_(post_ids)
+                ).all()
+                user_reshared_posts = {r.post_id for r in reshares}
         for (
             post,
             user,  # The target user (post author)
@@ -1224,6 +1102,7 @@ def get_user_posts(current_user, user_id):
         ) in paginated.items:
             user_reaction = user_reactions.get(post.id)
             is_bookmarked = post.id in bookmarked_posts if current_user else False
+            user_reshared = post.id in user_reshared_posts if current_user else False
 
             data.append(
                 {
@@ -1242,6 +1121,7 @@ def get_user_posts(current_user, user_id):
                     "user_disagreed": user_reaction == "disagree",
                     "comments_count": comments_count or 0,
                     "bookmarked": is_bookmarked,
+                    "user_reshared": user_reshared,
                     "author": {
                         "id": user.id,
                         "firstname": user.firstname,
@@ -1272,9 +1152,8 @@ def get_user_posts(current_user, user_id):
         import traceback
         print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
         return error_response(f"Failed to fetch user posts: {str(e)}", 500)
-      
-      
-      
+
+
 @community_bp.route("/posts/<int:post_id>", methods=["GET"])
 @token_required
 def get_single_post(current_user, post_id):
@@ -1662,7 +1541,7 @@ def list_all_posts(current_user=None):
 
     user_reactions = {}
     bookmarked_posts = set()
-    
+
     if current_user:
         post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
         if post_ids:
@@ -1673,7 +1552,7 @@ def list_all_posts(current_user=None):
                 Like.type == "post",
             ).all()
             user_reactions = {r.post_id: r.reaction_type for r in reactions}
-            
+
             # Get bookmarked posts
             bookmarks = Bookmark.query.filter(
                 Bookmark.user_id == current_user.id,
@@ -1682,6 +1561,14 @@ def list_all_posts(current_user=None):
             bookmarked_posts = {bm.post_id for bm in bookmarks}
 
     data = []
+    user_reshared_posts = set()
+    if current_user:
+        post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+        if post_ids:
+            reshares = Reshare.query.filter(
+                Reshare.user_id == current_user.id, Reshare.post_id.in_(post_ids)
+            ).all()
+            user_reshared_posts = {r.post_id for r in reshares}
     for (
         post,
         user,  # This is the post author
@@ -1694,6 +1581,7 @@ def list_all_posts(current_user=None):
     ) in paginated.items:
         user_reaction = user_reactions.get(post.id)
         is_bookmarked = post.id in bookmarked_posts if current_user else False
+        user_reshared = post.id in user_reshared_posts if current_user else False
 
         data.append(
             {
@@ -1712,6 +1600,7 @@ def list_all_posts(current_user=None):
                 "user_disagreed": user_reaction == "disagree",
                 "comments_count": comments_count or 0,
                 "bookmarked": is_bookmarked,  # Add bookmarked status
+                "user_reshared": user_reshared,  # Add reshared status
                 "author": {
                     "id": user.id,  # Use post author's ID
                     "firstname": user.firstname,  # FIXED: Use post author's firstname
@@ -1732,124 +1621,6 @@ def list_all_posts(current_user=None):
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "All posts fetched",
     )
-
-# @community_bp.route("/posts/all", methods=["GET"])
-# @token_required
-# def list_all_posts(current_user=None):
-#     """
-#     List ALL posts from ALL eras (discover/explore feed)
-#     ---
-#     tags:
-#       - Community
-#     parameters:
-#       - name: page
-#         in: query
-#         type: integer
-#         example: 1
-#         default: 1
-#       - name: per_page
-#         in: query
-#         type: integer
-#         example: 20
-#         default: 20
-#     responses:
-#       200:
-#         description: All posts fetched successfully
-#     """
-#     page = request.args.get("page", 1, type=int)
-#     per_page = request.args.get("per_page", 20, type=int)
-
-#     # FIX: Add explicit joins for User and Era
-#     query = (
-#         db.session.query(
-#             Post,
-#             User,  # Add User to the query
-#             Zone,
-#             Era,  # Add Era to the query
-#             func.count(distinct(Like.id)).label("likes_count"),
-#             func.count(
-#                 distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
-#             ).label("agree_count"),
-#             func.count(
-#                 distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
-#             ).label("disagree_count"),
-#             # func.count(distinct(Like.id)).label("likes_count"),
-#             func.count(distinct(Comment.id)).label("comments_count"),
-#         )
-#         .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
-#         .outerjoin(Comment, Comment.post_id == Post.id)
-#         .join(User, Post.user_id == User.id)  # Explicit join for User
-#         .join(Zone, Post.zone_id == Zone.id)
-#         .join(Era, Zone.era_id == Era.id)  # Explicit join for Era
-#         .group_by(Post.id, User.id, Zone.id, Era.id)  # Group by all selected tables
-#     )
-
-#     paginated = query.order_by(Post.created_at.desc()).paginate(
-#         page=page, per_page=per_page, error_out=False
-#     )
-
-#     user_reactions = {}
-#     if current_user:
-#         post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
-#         if post_ids:
-#             reactions = Like.query.filter(
-#                 Like.user_id == current_user.id,
-#                 Like.post_id.in_(post_ids),
-#                 Like.type == "post",
-#             ).all()
-#             user_reactions = {r.post_id: r.reaction_type for r in reactions}
-
-#     data = []
-#     for (
-#         post,
-#         user,
-#         zone,
-#         era,
-#         likes_count,
-#         agree_count,
-#         disagree_count,
-#         comments_count,
-#     ) in paginated.items:
-#         user_reaction = user_reactions.get(post.id)
-
-#         data.append(
-#             {
-#                 "id": post.id,
-#                 "title": post.title,
-#                 "content": post.content,
-#                 "media": (post.media.split("|") if post.media else []),
-#                 "created_at": post.created_at.isoformat(),
-#                 "time_ago": time_ago(post.created_at),
-#                 "pinned": post.pinned,
-#                 "hot_thread": post.hot_thread,
-#                 "likes_count": likes_count or 0,
-#                 "agree_count": agree_count or 0,
-#                 "disagree_count": disagree_count or 0,
-#                 "user_agreed": user_reaction == "agree",
-#                 "user_disagreed": user_reaction == "disagree",
-#                 "comments_count": comments_count or 0,
-#                 "user_liked": False,  # Keep for backward compatibility
-#                 "author": {
-#                     "id": user.id,
-#                     # "fullname": current_user.fullname,
-#                     "firstname": current_user.firstname,
-#                     "lastname": current_user.lastname,
-#                     "username": user.username,
-#                     "avatar": user.avatar or "",
-#                 },
-#                 "era": {
-#                     "id": era.id,
-#                     "name": era.name,
-#                     "year_range": era.year_range or "",
-#                 },
-#                 "zone": {"id": zone.id, "name": zone.name},
-#             }
-#         )
-
-#     return success_response(
-#         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
-#         "All posts fetched",
-#     )
 
 
 @community_bp.route("/posts", methods=["GET"])
@@ -1963,7 +1734,7 @@ def list_posts(current_user=None):
 
     user_reactions = {}
     bookmarked_posts = set()
-    
+
     if current_user:
         post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
         if post_ids:
@@ -1974,7 +1745,7 @@ def list_posts(current_user=None):
                 Like.type == "post",
             ).all()
             user_reactions = {r.post_id: r.reaction_type for r in reactions}
-            
+
             # Get bookmarked posts
             bookmarks = Bookmark.query.filter(
                 Bookmark.user_id == current_user.id,
@@ -1983,6 +1754,14 @@ def list_posts(current_user=None):
             bookmarked_posts = {bm.post_id for bm in bookmarks}
 
     data = []
+    user_reshared_posts = set()
+    if current_user:
+        post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
+        if post_ids:
+            reshares = Reshare.query.filter(
+                Reshare.user_id == current_user.id, Reshare.post_id.in_(post_ids)
+            ).all()
+            user_reshared_posts = {r.post_id for r in reshares}
     for (
         post,
         user,  # Post author
@@ -1995,6 +1774,7 @@ def list_posts(current_user=None):
     ) in paginated.items:
         user_reaction = user_reactions.get(post.id)
         is_bookmarked = post.id in bookmarked_posts if current_user else False
+        user_reshared = post.id in user_reshared_posts if current_user else False
 
         data.append(
             {
@@ -2013,6 +1793,7 @@ def list_posts(current_user=None):
                 "user_disagreed": user_reaction == "disagree",
                 "comments_count": comments_count or 0,
                 "bookmarked": is_bookmarked,  # Add bookmarked status
+                "user_reshared": user_reshared,  # Add reshared status
                 "author": {
                     "id": user.id,
                     "firstname": user.firstname,  # FIXED: Use post author's firstname
@@ -2032,113 +1813,63 @@ def list_posts(current_user=None):
         {"posts": data, "pagination": {"page": page, "total": paginated.total}},
         "Posts fetched",
     )
-    
-    
-    # era_id = request.args.get("era_id", type=int)
-    # page = request.args.get("page", 1, type=int)
-    # per_page = request.args.get("per_page", 20, type=int)
 
-    # query = (
-    #     db.session.query(
-    #         Post,
-    #         User,
-    #         Zone,
-    #         Era,
-    #         func.count(
-    #             distinct(case((Like.reaction_type == "agree", Like.id), else_=None))
-    #         ).label("agree_count"),
-    #         func.count(
-    #             distinct(case((Like.reaction_type == "disagree", Like.id), else_=None))
-    #         ).label("disagree_count"),
-    #         # likes_count,
-    #         # agree_count,
-    #         # disagree_count,
-    #         # comments_count,
-    #         func.count(distinct(Like.id)).label("likes_count"),
-    #         func.count(distinct(Comment.id)).label("comments_count"),
-    #     )
-    #     .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
-    #     .outerjoin(Comment, Comment.post_id == Post.id)
-    #     .join(Zone, Post.zone_id == Zone.id)
-    #     .join(Era, Zone.era_id == Era.id)
-    #     # .group_by(Post.id)
-    #     .group_by(Post.id, User.id, Zone.id, Era.id)
-    # )
 
-    # # If no era_id specified, default to user's communities
-    # if not era_id and current_user:
-    #     user_era_ids = [era.id for era in current_user.joined_eras]
-    #     if user_era_ids:
-    #         query = query.filter(Era.id.in_(user_era_ids))
+# @community_bp.route("/posts/<int:post_id>", methods=["DELETE"])
+# @token_required
+# def delete_post(current_user, post_id):
+#     """
+#     Delete a post (Admin or Post Owner only)
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: post_id
+#         required: true
+#         schema:
+#           type: integer
+#     responses:
+#       200:
+#         description: Post deleted successfully
+#       401:
+#         description: Unauthorized
+#       403:
+#         description: Forbidden - Not authorized to delete this post
+#       404:
+#         description: Post not found
+#     """
+#     try:
+#         post = Post.query.get(post_id)
+#         if not post:
+#             return error_response("Post not found", 404)
 
-    # if era_id:
-    #     query = query.filter(Era.id == era_id)
+#         # Check if user is either admin OR the post owner
+#         is_admin = hasattr(current_user, "role") and current_user.role == "admin"
+#         is_owner = post.user_id == current_user.id
 
-    # paginated = query.order_by(Post.created_at.desc()).paginate(
-    #     page=page, per_page=per_page, error_out=False
-    # )
+#         if not (is_admin or is_owner):
+#             return error_response("You are not authorized to delete this post", 403)
 
-    # user_reactions = {}
-    # if current_user:
-    #     post_ids = [post.id for post, _, _, _, _, _, _, _ in paginated.items]
-    #     if post_ids:
-    #         reactions = Like.query.filter(
-    #             Like.user_id == current_user.id,
-    #             Like.post_id.in_(post_ids),
-    #             Like.type == "post",
-    #         ).all()
-    #         user_reactions = {r.post_id: r.reaction_type for r in reactions}
+#         # Store post info for the socket event before deletion
+#         post_info = {"id": post.id, "title": post.title, "author_id": post.user_id}
 
-    # data = []
-    # for (
-    #     post,
-    #     user,
-    #     zone,
-    #     era,
-    #     likes_count,
-    #     agree_count,
-    #     disagree_count,
-    #     comments_count,
-    # ) in paginated.items:
-    #     user_reaction = user_reactions.get(post.id)
+#         db.session.delete(post)
+#         db.session.commit()
 
-    #     data.append(
-    #         {
-    #             "id": post.id,
-    #             "title": post.title,
-    #             "content": post.content,
-    #             "media": (post.media.split("|") if post.media else []),
-    #             "created_at": post.created_at.isoformat(),
-    #             "time_ago": time_ago(post.created_at),
-    #             "pinned": post.pinned,
-    #             "hot_thread": post.hot_thread,
-    #             "likes_count": likes_count or 0,
-    #             "agree_count": agree_count or 0,
-    #             "disagree_count": disagree_count or 0,
-    #             "user_agreed": user_reaction == "agree",
-    #             "user_disagreed": user_reaction == "disagree",
-    #             "comments_count": comments_count or 0,
-    #             "user_liked": False,  # Keep for backward compatibility
-    #             "author": {
-    #                 "id": user.id,
-    #                 # "fullname": current_user.fullname,
-    #                 "firstname": current_user.firstname,
-    #                 "lastname": current_user.lastname,
-    #                 "username": user.username,
-    #                 "avatar": user.avatar or "",
-    #             },
-    #             "era": {
-    #                 "id": era.id,
-    #                 "name": era.name,
-    #                 "year_range": era.year_range or "",
-    #             },
-    #             "zone": {"id": zone.id, "name": zone.name},
-    #         }
-    #     )
-    # return success_response(
-    #     {"posts": data, "pagination": {"page": page, "total": paginated.total}},
-    #     "Posts fetched",
-    # )
+#         # 🔴 Emit real-time event
+#         socketio.emit(
+#             "post_deleted",
+#             {"id": post_id, "deleted_by": current_user.id, "was_admin": is_admin},
+#             broadcast=True,
+#         )
+
+#         return success_response(message="Post deleted successfully")
+
+#     except Exception as e:
+#         print(f"❌ ERROR in delete_post: {str(e)}")
+#         db.session.rollback()
+#         return error_response("Failed to delete post", 500)
 
 
 @community_bp.route("/posts/<int:post_id>", methods=["DELETE"])
@@ -2166,13 +1897,22 @@ def delete_post(current_user, post_id):
         description: Post not found
     """
     try:
+        print(
+            f"🔍 DEBUG delete_post: Starting deletion for post_id={post_id}, user_id={current_user.id}"
+        )
+
         post = Post.query.get(post_id)
         if not post:
+            print(f"❌ DEBUG: Post {post_id} not found")
             return error_response("Post not found", 404)
 
         # Check if user is either admin OR the post owner
         is_admin = hasattr(current_user, "role") and current_user.role == "admin"
         is_owner = post.user_id == current_user.id
+
+        print(
+            f"🔍 DEBUG: is_admin={is_admin}, is_owner={is_owner}, post.user_id={post.user_id}, current_user.id={current_user.id}"
+        )
 
         if not (is_admin or is_owner):
             return error_response("You are not authorized to delete this post", 403)
@@ -2180,8 +1920,38 @@ def delete_post(current_user, post_id):
         # Store post info for the socket event before deletion
         post_info = {"id": post.id, "title": post.title, "author_id": post.user_id}
 
+        # 🔴 FIRST: Delete all related records to avoid foreign key constraints
+        try:
+            print("🔍 DEBUG: Deleting related comments...")
+            # Delete comments on this post
+            Comment.query.filter_by(post_id=post_id).delete()
+
+            print("🔍 DEBUG: Deleting related likes...")
+            # Delete likes on this post
+            Like.query.filter_by(post_id=post_id, type="post").delete()
+
+            print("🔍 DEBUG: Deleting related bookmarks...")
+            # Delete bookmarks for this post
+            Bookmark.query.filter_by(post_id=post_id).delete()
+
+            print("🔍 DEBUG: Deleting related reshares...")
+            # Delete reshare records for this post
+            Reshare.query.filter_by(post_id=post_id).delete()
+
+            # If you have any other related tables, add them here
+
+            print("🔍 DEBUG: All related records deleted, now deleting post...")
+
+        except Exception as related_error:
+            print(f"❌ DEBUG: Error deleting related records: {str(related_error)}")
+            db.session.rollback()
+            return error_response("Failed to clean up post dependencies", 500)
+
+        # Now delete the post
         db.session.delete(post)
         db.session.commit()
+
+        print("✅ DEBUG: Post deleted successfully")
 
         # 🔴 Emit real-time event
         socketio.emit(
@@ -2194,18 +1964,22 @@ def delete_post(current_user, post_id):
 
     except Exception as e:
         print(f"❌ ERROR in delete_post: {str(e)}")
+        import traceback
+
+        print(f"❌ TRACEBACK:\n{traceback.format_exc()}")
         db.session.rollback()
-        return error_response("Failed to delete post", 500)
+        return error_response(f"Failed to delete post: {str(e)}", 500)
 
 
 # ---------------------------
 # COMMENTS
 # ---------------------------
+
 @community_bp.route("/posts/<int:post_id>/comments", methods=["POST"])
 @token_required
 def add_comment(current_user, post_id):
     """
-    Add a comment to a post
+    Add a comment to a post or reply to an existing comment
     ---
     tags:
       - Community
@@ -2222,6 +1996,7 @@ def add_comment(current_user, post_id):
           required: [content]
           properties:
             content: {type: string}
+            parent_comment_id: {type: integer, description: "ID of parent comment for replies"}
     responses:
       201:
         description: Comment added successfully
@@ -2230,7 +2005,7 @@ def add_comment(current_user, post_id):
       401:
         description: Unauthorized
       404:
-        description: Post not found
+        description: Post not found or Parent comment not found
     """
     data = request.get_json()
     if not data.get("content"):
@@ -2240,51 +2015,525 @@ def add_comment(current_user, post_id):
     if not post:
         return error_response("Post not found", 404)
 
-    comment = Comment(content=data["content"], user_id=current_user.id, post_id=post_id)
+    parent_comment_id = data.get("parent_comment_id")
+    
+    # Validate parent comment if provided
+    if parent_comment_id:
+        parent_comment = Comment.query.filter_by(
+            id=parent_comment_id, 
+            post_id=post_id
+        ).first()
+        if not parent_comment:
+            return error_response("Parent comment not found", 404)
+
+    comment = Comment(
+        content=data["content"], 
+        user_id=current_user.id, 
+        post_id=post_id,
+        parent_comment_id=parent_comment_id
+    )
     db.session.add(comment)
     db.session.commit()
+
+    # Get the author info for the response
+    user = User.query.get(current_user.id)
+
+    comment_data = {
+        "id": comment.id,
+        "content": comment.content,
+        "created_at": comment.created_at.isoformat(),
+        "time_ago": time_ago(comment.created_at),
+        "parent_comment_id": comment.parent_comment_id,
+        "author": {
+            "id": user.id,
+            "firstname": user.firstname,
+            "lastname": user.lastname,
+            "username": user.username,
+            "avatar": user.avatar or "",
+        },
+    }
 
     # 🔴 Emit real-time event
     socketio.emit(
         "comment_added",
         {
-            "id": comment.id,
-            "content": comment.content,
-            "created_at": comment.created_at.isoformat(),
-            "time_ago": time_ago(comment.created_at),
-            "user_id": comment.user_id,
+            **comment_data,
             "post_id": comment.post_id,
-            "author": {
-                "id": current_user.id,
-                "firstname": current_user.firstname,
-                "lastname": current_user.lastname,
-                "username": current_user.username,
-                "avatar": current_user.avatar or "",
-            },
         },
         # broadcast=True,
     )
 
-    # return success_response(message="Comment added successfully", status=201)
     return success_response(
-        {
-            "comment": {
-                "id": comment.id,
-                "content": comment.content,
-                "created_at": comment.created_at.isoformat(),
-                "time_ago": time_ago(comment.created_at),
-                "author": {
-                    "id": current_user.id,
-                    "firstname": current_user.firstname,
-                    "lastname": current_user.lastname,
-                    "username": current_user.username,
-                    "avatar": current_user.avatar or "",
-                },
-            }
-        },
+        {"comment": comment_data},
         "Comment added successfully",
         status=201,
     )
+
+
+@community_bp.route("/comments/<int:comment_id>/replies", methods=["GET"])
+@token_required
+def get_comment_replies(current_user, comment_id):
+    """
+    Get all replies for a specific comment
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: comment_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Comment replies fetched successfully
+      404:
+        description: Comment not found
+    """
+    parent_comment = Comment.query.get(comment_id)
+    if not parent_comment:
+        return error_response("Comment not found", 404)
+
+    replies = (
+        Comment.query.filter_by(parent_comment_id=comment_id)
+        .order_by(Comment.created_at.asc())
+        .all()
+    )
+
+    data = []
+    for reply in replies:
+        user = User.query.get(reply.user_id)
+        data.append(
+            {
+                "id": reply.id,
+                "content": reply.content,
+                "created_at": reply.created_at.isoformat(),
+                "time_ago": time_ago(reply.created_at),
+                "author": {
+                    "id": user.id,
+                    "firstname": user.firstname,
+                    "lastname": user.lastname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+            }
+        )
+
+    return success_response(data, "Comment replies fetched successfully")
+
+
+@community_bp.route("/comments/<int:comment_id>/thread", methods=["GET"])
+@token_required
+def get_comment_thread(current_user, comment_id):
+    """
+    Get a complete comment thread starting from a specific comment
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: comment_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Comment thread fetched successfully
+      404:
+        description: Comment not found
+    """
+    def get_comment_with_ancestors(comment_id):
+        """Get comment and all its ancestors"""
+        comment = Comment.query.get(comment_id)
+        if not comment:
+            return None
+            
+        user = User.query.get(comment.user_id)
+        comment_data = {
+            "id": comment.id,
+            "content": comment.content,
+            "created_at": comment.created_at.isoformat(),
+            "time_ago": time_ago(comment.created_at),
+            "author": {
+                "id": user.id,
+                "firstname": user.firstname,
+                "lastname": user.lastname,
+                "username": user.username,
+                "avatar": user.avatar or "",
+            },
+            "replies": []
+        }
+        
+        # If this comment has a parent, get the parent chain
+        if comment.parent_comment_id:
+            parent_data = get_comment_with_ancestors(comment.parent_comment_id)
+            if parent_data:
+                comment_data["parent"] = parent_data
+        
+        return comment_data
+
+    def get_comment_with_descendants(comment_id):
+        """Get comment and all its replies recursively"""
+        comment = Comment.query.get(comment_id)
+        if not comment:
+            return None
+            
+        user = User.query.get(comment.user_id)
+        comment_data = {
+            "id": comment.id,
+            "content": comment.content,
+            "created_at": comment.created_at.isoformat(),
+            "time_ago": time_ago(comment.created_at),
+            "author": {
+                "id": user.id,
+                "firstname": user.firstname,
+                "lastname": user.lastname,
+                "username": user.username,
+                "avatar": user.avatar or "",
+            },
+            "replies": []
+        }
+        
+        # Get all direct replies
+        replies = Comment.query.filter_by(parent_comment_id=comment_id)\
+                              .order_by(Comment.created_at.asc())\
+                              .all()
+        
+        for reply in replies:
+            comment_data["replies"].append(get_comment_with_descendants(reply.id))
+            
+        return comment_data
+
+    # Get the complete thread
+    thread_data = get_comment_with_descendants(comment_id)
+    if not thread_data:
+        return error_response("Comment not found", 404)
+
+    return success_response(thread_data, "Comment thread fetched successfully")
+
+@community_bp.route("/posts/<int:post_id>/reshare", methods=["POST"])
+@token_required
+def reshare_post(current_user, post_id):
+    """
+    Reshare a post (increment reshare counter)
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Post reshared successfully
+      400:
+        description: Already reshared this post
+      404:
+        description: Post not found
+    """
+    try:
+        # Get the post
+        post = Post.query.get(post_id)
+        if not post:
+            return error_response("Post not found", 404)
+        
+        # Check if user already reshared this post
+        existing_reshare = Reshare.query.filter_by(
+            user_id=current_user.id,
+            post_id=post_id
+        ).first()
+        
+        if existing_reshare:
+            return error_response("You have already reshared this post", 400)
+        
+        # Create reshare record
+        reshare = Reshare(user_id=current_user.id, post_id=post_id)
+        db.session.add(reshare)
+        
+        # Increment reshare counter
+        post.reshare_count += 1
+        
+        db.session.commit()
+        
+        # 🔴 Emit real-time event
+        socketio.emit(
+            "post_reshared",
+            {
+                "post_id": post_id,
+                "reshare_count": post.reshare_count,
+                "reshared_by": current_user.id,
+                "reshared_by_username": current_user.username
+            },
+            broadcast=True
+        )
+        
+        return success_response(
+            {
+                "reshare_count": post.reshare_count,
+                "user_reshared": True
+            },
+            "Post reshared successfully"
+        )
+        
+    except Exception as e:
+        print(f"❌ ERROR in reshare_post: {str(e)}")
+        db.session.rollback()
+        return error_response(f"Failed to reshare post: {str(e)}", 500)
+
+
+@community_bp.route("/posts/<int:post_id>/unreshare", methods=["POST"])
+@token_required
+def unreshare_post(current_user, post_id):
+    """
+    Remove reshare from a post (decrement reshare counter)
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Reshare removed successfully
+      404:
+        description: Reshare not found or Post not found
+    """
+    try:
+        # Get the post
+        post = Post.query.get(post_id)
+        if not post:
+            return error_response("Post not found", 404)
+
+        # Find the reshare record
+        reshare = Reshare.query.filter_by(
+            user_id=current_user.id,
+            post_id=post_id
+        ).first()
+
+        if not reshare:
+            return error_response("You have not reshared this post", 404)
+
+        # Remove reshare record
+        db.session.delete(reshare)
+
+        # Decrement reshare counter (ensure it doesn't go below 0)
+        post.reshare_count = max(0, post.reshare_count - 1)
+
+        db.session.commit()
+
+        # 🔴 Emit real-time event
+        socketio.emit(
+            "post_unreshared",
+            {
+                "post_id": post_id,
+                "reshare_count": post.reshare_count,
+                "unreshared_by": current_user.id
+            },
+            broadcast=True
+        )
+
+        return success_response(
+            {
+                "reshare_count": post.reshare_count,
+                "user_reshared": False
+            },
+            "Reshare removed successfully"
+        )
+
+    except Exception as e:
+        print(f"❌ ERROR in unreshare_post: {str(e)}")
+        db.session.rollback()
+        return error_response(f"Failed to remove reshare: {str(e)}", 500)
+
+
+@community_bp.route("/posts/<int:post_id>/reshare/status", methods=["GET"])
+@token_required
+def get_reshare_status(current_user, post_id):
+    """
+    Check if current user has reshared a post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+    responses:
+      200:
+        description: Reshare status fetched successfully
+      404:
+        description: Post not found
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    has_reshared = (
+        Reshare.query.filter_by(user_id=current_user.id, post_id=post_id).first()
+        is not NoneReshare # type: ignore
+    )
+
+    return success_response(
+        {"user_reshared": has_reshared, "reshare_count": post.reshare_count},
+        "Reshare status fetched successfully",
+    )
+
+
+@community_bp.route("/posts/<int:post_id>/reshares/users", methods=["GET"])
+@token_required
+def get_reshare_users(current_user, post_id):
+    """
+    Get users who reshared a specific post
+    ---
+    tags:
+      - Community
+    parameters:
+      - in: path
+        name: post_id
+        required: true
+        schema:
+          type: integer
+      - name: page
+        in: query
+        type: integer
+        example: 1
+        default: 1
+      - name: per_page
+        in: query
+        type: integer
+        example: 20
+        default: 20
+    responses:
+      200:
+        description: Reshare users fetched successfully
+      404:
+        description: Post not found
+    """
+    post = Post.query.get(post_id)
+    if not post:
+        return error_response("Post not found", 404)
+
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
+
+    reshares = (
+        Reshare.query.filter_by(post_id=post_id)
+        .order_by(Reshare.created_at.desc())
+        .paginate(page=page, per_page=per_page, error_out=False)
+    )
+
+    data = []
+    for reshare in reshares.items:
+        user = User.query.get(reshare.user_id)
+        data.append(
+            {
+                "id": user.id,
+                "firstname": user.firstname,
+                "lastname": user.lastname,
+                "username": user.username,
+                "avatar": user.avatar or "",
+                "reshared_at": reshare.created_at.isoformat(),
+                "time_ago": time_ago(reshare.created_at),
+            }
+        )
+
+    return success_response(
+        {"users": data, "pagination": {"page": page, "total": reshares.total}},
+        "Reshare users fetched successfully",
+    )
+
+
+# @community_bp.route("/posts/<int:post_id>/comments", methods=["POST"])
+# @token_required
+# def add_comment(current_user, post_id):
+#     """
+#     Add a comment to a post
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: post_id
+#         required: true
+#         schema:
+#           type: integeri
+#       - in: body
+#         name: body
+#         schema:
+#           type: object
+#           required: [content]
+#           properties:
+#             content: {type: string}
+#     responses:
+#       201:
+#         description: Comment added successfully
+#       400:
+#         description: Content is required
+#       401:
+#         description: Unauthorized
+#       404:
+#         description: Post not found
+#     """
+#     data = request.get_json()
+#     if not data.get("content"):
+#         return error_response("Content is required", 400)
+
+#     post = Post.query.get(post_id)
+#     if not post:
+#         return error_response("Post not found", 404)
+
+#     comment = Comment(content=data["content"], user_id=current_user.id, post_id=post_id)
+#     db.session.add(comment)
+#     db.session.commit()
+
+#     # 🔴 Emit real-time event
+#     socketio.emit(
+#         "comment_added",
+#         {
+#             "id": comment.id,
+#             "content": comment.content,
+#             "created_at": comment.created_at.isoformat(),
+#             "time_ago": time_ago(comment.created_at),
+#             "user_id": comment.user_id,
+#             "post_id": comment.post_id,
+#             "author": {
+#                 "id": current_user.id,
+#                 "firstname": current_user.firstname,
+#                 "lastname": current_user.lastname,
+#                 "username": current_user.username,
+#                 "avatar": current_user.avatar or "",
+#             },
+#         },
+#         # broadcast=True,
+#     )
+
+#     # return success_response(message="Comment added successfully", status=201)
+#     return success_response(
+#         {
+#             "comment": {
+#                 "id": comment.id,
+#                 "content": comment.content,
+#                 "created_at": comment.created_at.isoformat(),
+#                 "time_ago": time_ago(comment.created_at),
+#                 "author": {
+#                     "id": current_user.id,
+#                     "firstname": current_user.firstname,
+#                     "lastname": current_user.lastname,
+#                     "username": current_user.username,
+#                     "avatar": current_user.avatar or "",
+#                 },
+#             }
+#         },
+#         "Comment added successfully",
+#         status=201,
+#     )
 
 
 # ---------------------------
@@ -2503,64 +2752,6 @@ def get_my_reaction(current_user, post_id):
     }
 
     return success_response(reaction_data, "User reaction status retrieved")
-
-
-# # ---------------------------
-# # LIKES
-# # ---------------------------
-# @community_bp.route("/posts/<int:post_id>/like", methods=["POST"])
-# @token_required
-# def toggle_like(current_user, post_id):
-#     """
-#     Like or unlike a post
-#     ---
-#     tags:
-#       - Community
-#     parameters:
-#       - in: path
-#         name: post_id
-#         required: true
-#         schema:
-#           type: integer
-#     responses:
-#       201:
-#         description: Post liked
-#       200:
-#         description: Post unliked
-#       401:
-#         description: Unauthorized
-#       404:
-#         description: Post not found
-#     """
-#     existing_like = Like.query.filter_by(
-#         user_id=current_user.id, post_id=post_id
-#     ).first()
-
-#     if existing_like:
-#         db.session.delete(existing_like)
-#         db.session.commit()
-
-#         # 🔴 Emit unlike event
-#         socketio.emit(
-#             "post_unliked",
-#             {"post_id": post_id, "user_id": current_user.id},
-#             broadcast=True,
-#         )
-
-#         return success_response(message="Unliked")
-#     else:
-#         like = Like(user_id=current_user.id, post_id=post_id)
-#         db.session.add(like)
-#         db.session.commit()
-
-#         # 🔴 Emit like event
-#         socketio.emit(
-#             "post_liked",
-#             {"post_id": post_id, "user_id": current_user.id},
-#             broadcast=True,
-#         )
-
-#         return success_response(message="Liked", status=201)
 
 
 # ---------------------------

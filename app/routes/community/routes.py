@@ -215,6 +215,8 @@ def list_zones(current_user=None):
     """
     List all Eras with proper joined status using real relationships
     """
+    if current_user:
+        db.session.refresh(current_user)
     joined_only = request.args.get("joined", "").lower() == "true"
 
     # For guests + joined_only → return empty
@@ -234,6 +236,7 @@ def list_zones(current_user=None):
     # 3. Get user's joined era IDs once (efficiently)
     user_era_ids = set()
     if current_user:
+        db.session.refresh(current_user)  # Add this at the top!
         user_era_ids = {era.id for era in current_user.joined_eras}
         # This loads the relationship properly — no raw SQL needed
 
@@ -431,6 +434,11 @@ def join_era(current_user, era_id):
 
     current_user.joined_eras.append(era)
     db.session.commit()
+
+    # THIS LINE FIXES EVERYTHING
+    db.session.refresh(current_user)  # Forces reload of all relationships
+    # OR even better:
+    # db.session.expire(current_user)
 
     socketio.emit(
         "user_joined_era",
@@ -2979,44 +2987,174 @@ def get_community_members(current_user, zone_id):
 
 @community_bp.route("/<int:zone_id>/posts", methods=["GET"])
 @token_required
-def get_community_posts(current_user, zone_id):
+def get_zone_posts(current_user=None, zone_id=None):
     """
-    Get posts in a community zone
-    ---
-    tags:
-      - Community
-    parameters:
-      - in: path
-        name: zone_id
-        required: true
-        schema:
-          type: integer
-    responses:
-      200:
-        description: Community posts fetched successfully
-      401:
-        description: Unauthorized
-      404:
-        description: Community not found
+    Get all posts in a specific zone with full details (same shape as all other feeds)
     """
-    zone = Zone.query.get(zone_id)
-    if not zone:
-        return error_response("Community not found", 404)
+    page = request.args.get("page", 1, type=int)
+    per_page = request.args.get("per_page", 20, type=int)
 
-    posts = Post.query.filter_by(zone_id=zone.id).all()
-    data = [
+    # Verify zone exists
+    zone = Zone.query.get_or_404(zone_id)
+
+    # Main query — identical structure to all other post endpoints
+    query = (
+        db.session.query(
+            Post,
+            User,  # author
+            Zone,
+            Era,
+            func.count(distinct(Like.id)).label("likes_count"),
+            func.count(distinct(case((Like.reaction_type == "agree", Like.id)))).label(
+                "agree_count"
+            ),
+            func.count(
+                distinct(case((Like.reaction_type == "disagree", Like.id)))
+            ).label("disagree_count"),
+            func.count(distinct(Comment.id)).label("comments_count"),
+        )
+        .join(User, Post.user_id == User.id)
+        .join(Zone, Post.zone_id == Zone.id)
+        .join(Era, Zone.era_id == Era.id)
+        .outerjoin(Like, (Like.post_id == Post.id) & (Like.type == "post"))
+        .outerjoin(Comment, Comment.post_id == Post.id)
+        .filter(Post.zone_id == zone_id)
+        .group_by(Post.id, User.id, Zone.id, Era.id)
+    )
+
+    paginated = query.order_by(Post.created_at.desc()).paginate(
+        page=page, per_page=per_page, error_out=False
+    )
+
+    # Get current user's reactions, bookmarks, and reshares
+    post_ids = [p.id for p, _, _, _, _, _, _, _ in paginated.items]
+
+    user_reactions = {}
+    bookmarked_posts = set()
+    user_reshared_posts = set()
+
+    if current_user and post_ids:
+        # Reactions
+        reactions = Like.query.filter(
+            Like.user_id == current_user.id,
+            Like.post_id.in_(post_ids),
+            Like.type == "post",
+        ).all()
+        user_reactions = {r.post_id: r.reaction_type for r in reactions}
+
+        # Bookmarks
+        bookmarks = Bookmark.query.filter(
+            Bookmark.user_id == current_user.id, Bookmark.post_id.in_(post_ids)
+        ).all()
+        bookmarked_posts = {b.post_id for b in bookmarks}
+
+        # Reshares — FIXED: parentheses now closed!
+        reshares = Reshare.query.filter(
+            Reshare.user_id == current_user.id, Reshare.post_id.in_(post_ids)
+        ).all()
+        user_reshared_posts = {r.post_id for r in reshares}
+
+    # Build response data
+    data = []
+    for (
+        post,
+        user,
+        zone,
+        era,
+        likes_count,
+        agree_count,
+        disagree_count,
+        comments_count,
+    ) in paginated.items:
+        data.append(
+            {
+                "id": post.id,
+                "title": post.title,
+                "content": post.content,
+                "media": post.media.split("|") if post.media else [],
+                "created_at": post.created_at.isoformat(),
+                "time_ago": time_ago(post.created_at),
+                "pinned": post.pinned,
+                "hot_thread": post.hot_thread,
+                "likes_count": likes_count or 0,
+                "agree_count": agree_count or 0,
+                "disagree_count": disagree_count or 0,
+                "comments_count": comments_count or 0,
+                "user_agreed": user_reactions.get(post.id) == "agree",
+                "user_disagreed": user_reactions.get(post.id) == "disagree",
+                "bookmarked": post.id in bookmarked_posts,
+                "reshared": post.id in user_reshared_posts,
+                "author": {
+                    "id": user.id,
+                    "firstname": user.firstname,
+                    "lastname": user.lastname,
+                    "username": user.username,
+                    "avatar": user.avatar or "",
+                },
+                "era": {
+                    "id": era.id,
+                    "name": era.name,
+                    "year_range": era.year_range or "",
+                },
+                "zone": {"id": zone.id, "name": zone.name},
+            }
+        )
+
+    return success_response(
         {
-            "id": p.id,
-            "title": p.title,
-            "content": p.content,
-            "pinned": p.pinned,
-            "hot_thread": p.hot_thread,
-            "created_at": p.created_at.isoformat(),
-            "user_id": p.user_id,
-        }
-        for p in posts
-    ]
-    return success_response(data, "Community posts fetched successfully")
+            "posts": data,
+            "pagination": {
+                "page": page,
+                "total": paginated.total,
+                "pages": paginated.pages,
+                "has_next": paginated.has_next,
+                "has_prev": paginated.has_prev,
+            },
+        },
+        f"Posts from {zone.name} fetched successfully",
+    )
+
+
+# @community_bp.route("/<int:zone_id>/posts", methods=["GET"])
+# @token_required
+# def get_community_posts(current_user, zone_id):
+#     """
+#     Get posts in a community zone
+#     ---
+#     tags:
+#       - Community
+#     parameters:
+#       - in: path
+#         name: zone_id
+#         required: true
+#         schema:
+#           type: integer
+#     responses:
+#       200:
+#         description: Community posts fetched successfully
+#       401:
+#         description: Unauthorized
+#       404:
+#         description: Community not found
+#     """
+#     zone = Zone.query.get(zone_id)
+#     if not zone:
+#         return error_response("Community not found", 404)
+
+#     posts = Post.query.filter_by(zone_id=zone.id).all()
+#     data = [
+#         {
+#             "id": p.id,
+#             "title": p.title,
+#             "content": p.content,
+#             "pinned": p.pinned,
+#             "hot_thread": p.hot_thread,
+#             "created_at": p.created_at.isoformat(),
+#             "user_id": p.user_id,
+#         }
+#         for p in posts
+#     ]
+#     return success_response(data, "Community posts fetched successfully")
 
 
 @community_bp.route("/<int:zone_id>/comments", methods=["GET"])

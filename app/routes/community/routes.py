@@ -215,8 +215,6 @@ def list_zones(current_user=None):
     """
     List all Eras with proper joined status using real relationships
     """
-    if current_user:
-        db.session.refresh(current_user)
     joined_only = request.args.get("joined", "").lower() == "true"
 
     # For guests + joined_only → return empty
@@ -236,7 +234,6 @@ def list_zones(current_user=None):
     # 3. Get user's joined era IDs once (efficiently)
     user_era_ids = set()
     if current_user:
-        db.session.refresh(current_user)  # Add this at the top!
         user_era_ids = {era.id for era in current_user.joined_eras}
         # This loads the relationship properly — no raw SQL needed
 
@@ -434,11 +431,6 @@ def join_era(current_user, era_id):
 
     current_user.joined_eras.append(era)
     db.session.commit()
-
-    # THIS LINE FIXES EVERYTHING
-    db.session.refresh(current_user)  # Forces reload of all relationships
-    # OR even better:
-    # db.session.expire(current_user)
 
     socketio.emit(
         "user_joined_era",

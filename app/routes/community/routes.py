@@ -10,6 +10,8 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import sqlalchemy as sa
 from sqlalchemy import func, distinct
+from sqlalchemy.orm import joinedload
+
 
 community_bp = Blueprint("community", __name__, url_prefix="/community")
 
@@ -208,58 +210,101 @@ def time_ago(dt):
 #         print(f"❌ CRITICAL DEBUG 31: Full traceback:\n{traceback.format_exc()}")
 #         return error_response(f"Internal server error: {str(e)}", 500)
 
-
 @community_bp.route("/zones", methods=["GET"])
 @token_required
 def list_zones(current_user=None):
-    """
-    List all Eras with proper joined status using real relationships
-    """
     joined_only = request.args.get("joined", "").lower() == "true"
 
-    # For guests + joined_only → return empty
     if joined_only and not current_user:
-        return success_response([], "No joined eras for unauthenticated user")
+        return success_response([], "No joined eras")
 
-    # 1. Get base query
-    query = Era.query
+    query = Era.query.options(
+        joinedload(Era.members),
+        joinedload(Era.zones).joinedload(Zone.posts)
+    )
 
-    # 2. If joined_only → filter to user's joined eras
     if joined_only and current_user:
         query = query.filter(Era.members.any(User.id == current_user.id))
-    #    ^^^ This uses the actual many-to-many relationship correctly ^^^
 
     eras = query.all()
 
-    # 3. Get user's joined era IDs once (efficiently)
+    # Get joined era IDs directly from association table (most reliable)
     user_era_ids = set()
     if current_user:
-        user_era_ids = {era.id for era in current_user.joined_eras}
-        # This loads the relationship properly — no raw SQL needed
-
-    # 4. Build response with real counts using proper joins
-    data = []
-    for era in eras:
-        data.append(
-            {
-                "id": era.id,
-                "name": era.name,
-                "year_range": era.year_range or "",
-                "description": era.description or "",
-                "image": era.image or "",
-                "member_count": len(era.members),  # Real count
-                "post_count": sum(len(zone.posts) for zone in era.zones),  # Real count
-                "joined": era.id in user_era_ids,  # Correct!
-            }
+        result = db.session.execute(
+            text("SELECT era_id FROM user_era_membership WHERE user_id = :uid"),
+            {"uid": current_user.id}
         )
+        user_era_ids = {row[0] for row in result}
 
-    message = "Eras fetched successfully"
-    if joined_only:
-        message = f"Showing {len(data)} joined eras"
-    elif not current_user:
-        message = "Eras fetched (sign in to join communities)"
+    data = [
+        {
+            "id": era.id,
+            "name": era.name,
+            "year_range": era.year_range or "",
+            "description": era.description or "",
+            "image": era.image or "",
+            "member_count": len(era.members),
+            "post_count": sum(len(zone.posts) for zone in era.zones),
+            "joined": era.id in user_era_ids,
+        }
+        for era in eras
+    ]
 
-    return success_response(data, message)
+    return success_response(data, "Eras fetched successfully")
+  
+  
+# @community_bp.route("/zones", methods=["GET"])
+# @token_required
+# def list_zones(current_user=None):
+#     """
+#     List all Eras with proper joined status using real relationships
+#     """
+#     joined_only = request.args.get("joined", "").lower() == "true"
+
+#     # For guests + joined_only → return empty
+#     if joined_only and not current_user:
+#         return success_response([], "No joined eras for unauthenticated user")
+
+#     # 1. Get base query
+#     query = Era.query
+
+#     # 2. If joined_only → filter to user's joined eras
+#     if joined_only and current_user:
+#         query = query.filter(Era.members.any(User.id == current_user.id))
+#     #    ^^^ This uses the actual many-to-many relationship correctly ^^^
+
+#     eras = query.all()
+
+#     # 3. Get user's joined era IDs once (efficiently)
+#     user_era_ids = set()
+#     if current_user:
+#         user_era_ids = {era.id for era in current_user.joined_eras}
+#         # This loads the relationship properly — no raw SQL needed
+
+#     # 4. Build response with real counts using proper joins
+#     data = []
+#     for era in eras:
+#         data.append(
+#             {
+#                 "id": era.id,
+#                 "name": era.name,
+#                 "year_range": era.year_range or "",
+#                 "description": era.description or "",
+#                 "image": era.image or "",
+#                 "member_count": len(era.members),  # Real count
+#                 "post_count": sum(len(zone.posts) for zone in era.zones),  # Real count
+#                 "joined": era.id in user_era_ids,  # Correct!
+#             }
+#         )
+
+#     message = "Eras fetched successfully"
+#     if joined_only:
+#         message = f"Showing {len(data)} joined eras"
+#     elif not current_user:
+#         message = "Eras fetched (sign in to join communities)"
+
+#     return success_response(data, message)
 
 
 @community_bp.route("/eras/<int:era_id>", methods=["GET"])
@@ -409,9 +454,44 @@ def create_zone(current_user):
     return success_response({"era_id": era.id}, "Era created successfully", status=201)
 
 
+# @community_bp.route("/eras/<int:era_id>/join", methods=["POST"])
+# @token_required
+# def join_era(current_user, era_id):
+#     """
+#     Join an era
+#     ---
+#     tags:
+#       - Community
+#     responses:
+#       200:
+#         description: Joined successfully
+#       404:
+#         description: Era not found
+#       400:
+#         description: Already joined
+#     """
+#     era = Era.query.get_or_404(era_id)
+#     if era in current_user.joined_eras:
+#         return error_response("Already joined", 400)
+
+#     current_user.joined_eras.append(era)
+#     db.session.commit()
+
+#     socketio.emit(
+#         "user_joined_era",
+#         {
+#             "user_id": current_user.id,
+#             "era_id": era.id,
+#             "username": current_user.username,
+#         },
+#         # broadcast=True,
+#     )
+
+#     return success_response(message="Joined era")
+
 @community_bp.route("/eras/<int:era_id>/join", methods=["POST"])
 @token_required
-def join_era(current_user, era_id):
+def join_era(current_user: User, era_id: int):
     """
     Join an era
     ---
@@ -424,27 +504,105 @@ def join_era(current_user, era_id):
         description: Era not found
       400:
         description: Already joined
+      401:
+        description: Authentication required
     """
     era = Era.query.get_or_404(era_id)
-    if era in current_user.joined_eras:
-        return error_response("Already joined", 400)
 
-    current_user.joined_eras.append(era)
+    # NEVER trust current_user.joined_eras in production
+    # Instead query the association table directly (one fast query)
+    already_joined = db.session.execute(
+        text("SELECT 1 FROM user_era_membership WHERE user_id = :uid AND era_id = :eid"),
+        {"uid": current_user.id, "eid": era.id}
+    ).scalar() is not None
+
+    if already_joined:
+        return error_response("You have already joined this era", 400)
+
+    # Insert the membership row explicitly (guaranteed to work)
+    db.session.execute(
+        text("INSERT INTO user_era_membership (user_id, era_id) VALUES (:uid, :eid)"),
+        {"uid": current_user.id, "eid": era.id}
+    )
     db.session.commit()
 
+    # Now emit the event
     socketio.emit(
         "user_joined_era",
         {
             "user_id": current_user.id,
-            "era_id": era.id,
             "username": current_user.username,
+            "era_id": era.id,
+            "message": f"{current_user.username} joined the era!"
         },
-        # broadcast=True,
+        to=f"era_{era.id}"
     )
 
-    return success_response(message="Joined era")
+    return success_response(message="Successfully joined the era!")
+  
 
 
+    # era = Era.query.get_or_404(era_id)
+
+    # if era in current_user.joined_eras:
+    #     return error_response("You have already joined this era", 400)
+
+    # current_user.joined_eras.append(era)
+    # db.session.commit()
+
+    # # Emit to everyone in the era (or use rooms for scalability)
+    # socketio.emit(
+    #     "user_joined_era",
+    #     {
+    #         "user_id": current_user.id,
+    #         "username": current_user.username,
+    #         "era_id": era.id,
+    #         "message": f"{current_user.username} joined the era!"
+    #     },
+    #     to=f"era_{era.id}"  # Recommended: use SocketIO rooms
+    # )
+
+    # return success_response(message="Successfully joined the era!")
+  
+
+@community_bp.route("/eras/<int:era_id>/leave", methods=["POST"])
+@token_required
+def leave_era(current_user: User, era_id: int):
+    """
+    Leave an era
+    ---
+    tags:
+      - Community
+    responses:
+      200:
+        description: Left successfully
+      404:
+        description: Era not found
+      400:
+        description: Not a member
+      401:
+        description: Authentication required
+    """
+    era = Era.query.get_or_404(era_id)
+
+    result = db.session.execute(
+        text("DELETE FROM user_era_membership WHERE user_id = :uid AND era_id = :eid"),
+        {"uid": current_user.id, "eid": era.id}
+    )
+    db.session.commit()
+
+    if result.rowcount == 0:
+        return error_response("You are not a member of this era", 400)
+
+    socketio.emit("user_left_era", {
+        "user_id": current_user.id,
+        "username": current_user.username,
+        "era_id": era.id
+    }, to=f"era_{era.id}")
+
+    return success_response(message="Left the era successfully")
+  
+  
 @community_bp.route("/posts", methods=["POST"])
 @token_required
 def create_post(current_user):

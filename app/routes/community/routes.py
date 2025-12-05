@@ -9,7 +9,7 @@ from sqlalchemy import case, func, distinct, text
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import sqlalchemy as sa
-from sqlalchemy import func, distinct
+from sqlalchemy import func, distinct, desc
 from sqlalchemy.orm import joinedload
 
 
@@ -521,9 +521,19 @@ def join_era(current_user: User, era_id: int):
 
     # Insert the membership row explicitly (guaranteed to work)
     db.session.execute(
-        text("INSERT INTO user_era_membership (user_id, era_id) VALUES (:uid, :eid)"),
-        {"uid": current_user.id, "eid": era.id}
+        text(
+            """
+        INSERT INTO user_era_membership (user_id, era_id, joined_at) 
+        VALUES (:uid, :eid, NOW())
+        ON CONFLICT (user_id, era_id) DO NOTHING
+    """
+        ),
+        {"uid": current_user.id, "eid": era.id},
     )
+    # db.session.execute(
+    #     text("INSERT INTO user_era_membership (user_id, era_id) VALUES (:uid, :eid)"),
+    #     {"uid": current_user.id, "eid": era.id}
+    # )
     db.session.commit()
 
     # Now emit the event
@@ -539,8 +549,6 @@ def join_era(current_user: User, era_id: int):
     )
 
     return success_response(message="Successfully joined the era!")
-  
-
 
     # era = Era.query.get_or_404(era_id)
 
@@ -3104,29 +3112,49 @@ def get_community_members(current_user, zone_id):
       404:
         description: Community not found
     """
-    zone = Zone.query.options(joinedload(Zone.era).joinedload(Era.members)).get(zone_id)
+    # Load zone + era in one query to avoid N+1
+    zone = Zone.query.options(joinedload(Zone.era)).get(zone_id)
     if not zone or not zone.era:
         return error_response("Community not found", 404)
 
-    # REAL members from the relationship (eager loaded to avoid lazy issues)
-    members = zone.era.members
+    era_id = zone.era.id
+
+    # Direct raw query — bypasses SQLAlchemy metadata cache completely
+    result = db.session.execute(
+        text(
+            """
+            SELECT 
+                u.id,
+                u.username,
+                u.fullname,
+                u.role,
+                u.avatar,
+                mem.joined_at
+            FROM users u
+            JOIN user_era_membership mem ON mem.user_id = u.id
+            WHERE mem.era_id = :era_id
+            ORDER BY mem.joined_at DESC
+        """
+        ),
+        {"era_id": era_id},
+    )
+
+    members = result.fetchall()
 
     data = [
         {
-            "id": u.id,
-            "username": u.username,
-            "fullname": u.fullname or u.username,
-            "role": u.role,
-            "avatar": u.avatar or "",
-            # No accurate joined_at without column → just show account age or None
-            "joined_at": None,
+            "id": row.id,
+            "username": row.username,
+            "fullname": row.fullname or row.username,
+            "role": row.role,
+            "avatar": row.avatar or "",
+            "joined_at": row.joined_at.isoformat() if row.joined_at else None,
         }
-        for u in members
+        for row in members
     ]
 
-    return success_response(data, f"{len(data)} members in this community")
-  
-  
+    return success_response(data, f"{len(data)} members fetched")
+
     # zone = Zone.query.get(zone_id)
     # if not zone:
     #     return error_response("Community not found", 404)

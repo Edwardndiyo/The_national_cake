@@ -252,8 +252,8 @@ def list_zones(current_user=None):
     ]
 
     return success_response(data, "Eras fetched successfully")
-  
-  
+
+
 # @community_bp.route("/zones", methods=["GET"])
 # @token_required
 # def list_zones(current_user=None):
@@ -563,7 +563,7 @@ def join_era(current_user: User, era_id: int):
     # )
 
     # return success_response(message="Successfully joined the era!")
-  
+
 
 @community_bp.route("/eras/<int:era_id>/leave", methods=["POST"])
 @token_required
@@ -601,8 +601,8 @@ def leave_era(current_user: User, era_id: int):
     }, to=f"era_{era.id}")
 
     return success_response(message="Left the era successfully")
-  
-  
+
+
 @community_bp.route("/posts", methods=["POST"])
 @token_required
 def create_post(current_user):
@@ -3104,35 +3104,58 @@ def get_community_members(current_user, zone_id):
       404:
         description: Community not found
     """
-    zone = Zone.query.get(zone_id)
-    if not zone:
+    zone = Zone.query.options(joinedload(Zone.era).joinedload(Era.members)).get(zone_id)
+    if not zone or not zone.era:
         return error_response("Community not found", 404)
 
-    members = (
-        db.session.query(
-            User.id,
-            User.username,
-            User.fullname,
-            User.role,
-            func.min(Post.created_at).label("joined_at"),
-        )
-        .join(Post, Post.user_id == User.id)
-        .filter(Post.zone_id == zone_id)
-        .group_by(User.id, User.username, User.fullname, User.role)
-        .all()
-    )
+    # REAL members from the relationship (eager loaded to avoid lazy issues)
+    members = zone.era.members
 
     data = [
         {
-            "id": m.id,
-            "username": m.username,
-            "fullname": m.fullname,
-            "role": m.role,
-            "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+            "id": u.id,
+            "username": u.username,
+            "fullname": u.fullname or u.username,
+            "role": u.role,
+            "avatar": u.avatar or "",
+            # No accurate joined_at without column → just show account age or None
+            "joined_at": None,
         }
-        for m in members
+        for u in members
     ]
-    return success_response(data, "Community members fetched successfully")
+
+    return success_response(data, f"{len(data)} members in this community")
+  
+  
+    # zone = Zone.query.get(zone_id)
+    # if not zone:
+    #     return error_response("Community not found", 404)
+
+    # members = (
+    #     db.session.query(
+    #         User.id,
+    #         User.username,
+    #         User.fullname,
+    #         User.role,
+    #         func.min(Post.created_at).label("joined_at"),
+    #     )
+    #     .join(Post, Post.user_id == User.id)
+    #     .filter(Post.zone_id == zone_id)
+    #     .group_by(User.id, User.username, User.fullname, User.role)
+    #     .all()
+    # )
+
+    # data = [
+    #     {
+    #         "id": m.id,
+    #         "username": m.username,
+    #         "fullname": m.fullname,
+    #         "role": m.role,
+    #         "joined_at": m.joined_at.isoformat() if m.joined_at else None,
+    #     }
+    #     for m in members
+    # ]
+    # return success_response(data, "Community members fetched successfully")
 
 
 @community_bp.route("/<int:zone_id>/posts", methods=["GET"])
